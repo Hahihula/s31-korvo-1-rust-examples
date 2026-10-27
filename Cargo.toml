@@ -69,6 +69,7 @@ smart-leds = "0.4"
 embassy-sync = "0.8"
 embassy-futures = "0.1"
 libmudtelnet-rs = { version = "2.0.10", default-features = false }
+embedded-graphics = "0.8"
 
 
 # The ESP32-S31 support in the released crates is incomplete (Wi-Fi connect

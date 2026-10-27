@@ -39,8 +39,9 @@ Log verbosity follows `ESP_LOG` (default `info`), for example
 
 | Path | Contents |
 |------|----------|
-| `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus and RGB LED setup |
+| `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus, RGB LED setup and PSRAM split |
 | `src/buttons.rs` | Debounced decoder for the four ADC-ladder buttons, plus the BOOT button (GPIO61) |
+| `src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
 | `src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
 | `src/bin/NN_*.rs` | The demos |
 | `vendor/libmudtelnet-rs` | Local copy of the telnet parser with its `no_std` build fixed (see demo 05) |
@@ -289,3 +290,70 @@ depends on `bytes` with default features, which pulls in `std`. That makes it fa
 is an unmodified copy of 2.0.10 with only that dependency changed to
 `default-features = false`, plus the test and example targets removed. `Cargo.toml` uses
 it through `[patch.crates-io]`. Once a fixed release is published, the patch can be dropped.
+
+### 08 – RGB LCD
+
+```bash
+cargo run --release --bin 08_display
+```
+
+Drives the 4.3-inch 800×480 LCD subboard (ESP32-S3-LCD-EV-Board-SUB3) over the
+16-bit parallel RGB interface (LCD_CAM in DPI mode). The subboard needs no
+initialisation commands, and its backlight is always on.
+
+On screen you should see:
+
+- **Top:** eight colour bars (white, yellow, cyan, green, magenta, red, blue, black).
+- **Middle:** four 32-step ramps (grey, red, green, blue). Smooth ramps without missing
+  or swapped steps mean all 16 data lines are wired and mapped correctly.
+- **Edges:** a one-pixel white border. All four sides should be visible.
+- **Below:** a title line and a frame counter in the top right of the animation area.
+- **Bottom:** a square bouncing in the framed area and changing colour every 30 frames.
+
+The log prints the frame rate every five seconds:
+
+```
+INFO - === Demo 08: RGB LCD 800x480 ===
+INFO - PSRAM size: 16 MB
+INFO - Test pattern drawn, animating
+INFO - 35.4 fps
+```
+
+How it works:
+
+- **Frame buffer:** the first 768,000 bytes of PSRAM (`board::psram_split`). The rest of
+  PSRAM becomes heap.
+- **Continuous refresh:** the DMA descriptors over the frame buffer form a ring, and the
+  LCD runs in continuous-frame mode. Once started, the panel is refreshed at a constant
+  35.4 Hz with no CPU involvement. The AXI DMA reads PSRAM in 64-byte bursts; the ~190
+  descriptors live in internal RAM.
+- **Drawing:** `Display::canvas()` is an embedded-graphics `DrawTarget` over the buffer.
+  It draws straight into memory that is being scanned out, so fast changes can tear
+  briefly. `Display::present()` writes the changed rows back from the CPU cache, so the
+  DMA sees them, then waits for the next frame start (VSYNC). The wait is asynchronous,
+  so other tasks run meanwhile.
+- **Draw first, then present:** the stream starts with the first `present()` call. Draw
+  the initial screen before that. See the pitfalls below for why.
+- **Timing:** the panel values come from Espressif's esp-bsp
+  (`SUB_BOARD3_800_480_PANEL_35HZ_RGB_TIMING`): 18 MHz pixel clock, HSYNC 40/40/48 and
+  VSYNC 23/32/13 (pulse / back porch / front porch).
+
+Pitfalls found while bringing up this panel on the ESP32-S31 (all on the board, with the
+pinned esp-hal `main`):
+
+- **Uneven gaps between frames:** sending one frame per `send()` and drawing between
+  frames lets the pause between frames vary. The panel then loses sync and fades to
+  black, even though the DMA reports no errors. A constant gap is fine. That is why
+  the LCD streams continuously.
+- **Restarting every frame:** restarting the stream at each VSYNC to stay aligned
+  makes the picture blink, because the restart lands at a slightly different time
+  each frame.
+- **Heavy drawing during scan-out:** PSRAM has little headroom here. esp-hal runs it
+  octal at 200 MHz, and we measured about 55 MB/s for DMA against the 36 MB/s the panel
+  needs. Rewriting the whole frame while it is being scanned out starves the DMA; the
+  LCD keeps its timing and the picture ends up permanently shifted. Drawing the first
+  screen before the stream starts avoids that. After a full-screen redraw,
+  `Display::resync()` realigns the stream at the cost of one blink.
+- **Pixel clock:** the panel shows nothing usable at 6 or 9 MHz. Keep it at 18 MHz.
+- **Internal-RAM bursts:** keep them enabled (`InternalBurstConfig::Enabled`) for the
+  descriptors.

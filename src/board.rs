@@ -17,7 +17,8 @@ use esp_hal::{
     Async,
     clock::CpuClock,
     i2c::master::{Config as I2cConfig, ConfigError, I2c, Instance as I2cInstance},
-    peripherals::{GPIO0, GPIO1, GPIO37, Peripherals, RMT},
+    peripherals::{GPIO0, GPIO1, GPIO37, PSRAM, Peripherals, RMT},
+    psram::Psram,
     rmt::Rmt,
     time::Rate,
 };
@@ -46,7 +47,10 @@ pub fn init() -> Peripherals {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 8176);
+    // Not `#[esp_hal::ram(reclaimed)]`: on the ESP32-S31, heap data in the
+    // reclaimed bootloader RAM (0x2F06CFB0..0x2F07CFB0) broke the PSRAM frame
+    // buffer DMA of the LCD (the panel faded to black while the CPU ran on).
+    esp_alloc::heap_allocator!(size: 16 * 1024);
 
     peripherals
 }
@@ -77,4 +81,29 @@ pub type RgbLed<'d> = RmtSmartLeds<'d, { buffer_size::<RGB8>(1) }, Async, RGB8, 
 pub fn rgb_led<'d>(rmt: RMT<'d>, pin: GPIO37<'d>) -> Result<RgbLed<'d>, esp_hal_smartled::Error> {
     let rmt = Rmt::new(rmt, RMT_FREQ)?.into_async();
     RmtSmartLeds::new(WS2812B_TIMING, rmt.channel0, pin, RMT_FREQ)
+}
+
+/// Maps the 16 MB PSRAM, hands the first `reserve` bytes (rounded up to a
+/// 64-byte cache line) to the caller, e.g. as a DMA frame buffer, and adds the
+/// rest to the heap.
+///
+/// Call at most once.
+pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> &'static mut [u8] {
+    let psram = Psram::new(psram, Default::default());
+    let (start, size) = psram.raw_parts();
+    let reserve = reserve.next_multiple_of(64).min(size);
+
+    // SAFETY: the PSRAM mapping is valid for `size` bytes for the rest of the
+    // program, nothing else uses it, and the heap only gets the part after
+    // `reserve`.
+    unsafe {
+        if size > reserve {
+            esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+                start.add(reserve),
+                size - reserve,
+                esp_alloc::MemoryCapability::External.into(),
+            ));
+        }
+        core::slice::from_raw_parts_mut(start, reserve)
+    }
 }
