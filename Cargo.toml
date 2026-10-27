@@ -4,10 +4,6 @@ name         = "s31-rust-examples"
 rust-version = "1.95"
 version      = "0.1.0"
 
-[[bin]]
-name = "s31-rust-examples"
-path = "./src/bin/main.rs"
-
 [dependencies]
 esp-hal = { version = "~1.2.2", features = ["esp32s31", "log-04", "unstable"] }
 
@@ -67,6 +63,10 @@ smoltcp = { version = "0.14.0", default-features = false, features = [
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
+esp-hal-smartled = { version = "0.18", features = ["esp32s31"] }
+smart-leds = "0.4"
+embassy-sync = "0.8"
+embassy-futures = "0.1"
 
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
