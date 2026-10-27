@@ -22,7 +22,9 @@
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     Blocking,
-    analog::adc::{Adc, AdcConfig, AdcPin, Attenuation, FULL_SCALE, ZERO_DIFF_CODE},
+    analog::adc::{
+        Adc, AdcConfig, AdcPin, Attenuation, Error as AdcError, FULL_SCALE, ZERO_DIFF_CODE,
+    },
     gpio::{Input, InputConfig, Pull},
     peripherals::{ADC1, GPIO42, GPIO61},
 };
@@ -89,11 +91,11 @@ pub struct Buttons<'d> {
 impl<'d> Buttons<'d> {
     /// Sets up the ADC and samples the idle level. Keep the buttons released
     /// during this call.
-    pub fn new(adc1: ADC1<'d>, gpio42: GPIO42<'d>) -> Self {
+    pub fn new(adc1: ADC1<'d>, gpio42: GPIO42<'d>) -> Result<Self, AdcError> {
         let mut config = AdcConfig::new();
         // The S31 SAR has a single input range; the attenuation is ignored.
         let pin = config.enable_pin(gpio42, Attenuation::_11dB);
-        let adc = Adc::new(adc1, config);
+        let adc = Adc::new(adc1, config)?;
 
         let mut this = Self {
             adc,
@@ -112,17 +114,18 @@ impl<'d> Buttons<'d> {
         } else {
             FULL_SCALE
         };
-        this
+        Ok(this)
     }
 
     pub fn idle_raw(&self) -> u16 {
         self.idle_raw
     }
 
-    /// Average of four conversions.
+    /// Average of four conversions. A failed conversion counts as the idle level.
     pub fn read_raw(&mut self) -> u16 {
+        let idle = self.idle_raw;
         let sum: u32 = (0..4)
-            .map(|_| u32::from(self.adc.read_blocking(&mut self.pin)))
+            .map(|_| u32::from(self.adc.read_blocking(&mut self.pin).unwrap_or(idle)))
             .sum();
         (sum / 4) as u16
     }

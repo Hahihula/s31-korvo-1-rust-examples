@@ -36,10 +36,10 @@ async fn main(_spawner: Spawner) -> ! {
     let peripherals = board::init();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    esp_rtos::start(timg0.timer0);
 
     info!("=== Demo 01: buttons (ADC ladder on GPIO42) ===");
-    let mut buttons = Buttons::new(peripherals.ADC1, peripherals.GPIO42);
+    let mut buttons = Buttons::new(peripherals.ADC1, peripherals.GPIO42).expect("ADC init");
     info!(
         "ADC calibration: zero={} idle={} full_scale={}",
         ZERO_DIFF_CODE,

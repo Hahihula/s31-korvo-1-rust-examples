@@ -158,7 +158,7 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = board::init();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    esp_rtos::start(timg0.timer0);
 
     info!("=== Demo 02: RGB LED (WS2812B on GPIO37 via RMT) ===");
     let mut led = board::rgb_led(peripherals.RMT, peripherals.GPIO37).expect("RMT LED init");

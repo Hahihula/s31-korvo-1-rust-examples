@@ -11,6 +11,12 @@ development board (ESP32-S31-WROOM-3, 16 MB flash, 16 MB PSRAM), built on
 - [`espflash`](https://github.com/esp-rs/espflash) 4.x.
 - One USB-C cable into the **UART** port of the board, with the power switch set to ON.
 
+The ESP32-S31 support in the released esp-rs crates is incomplete; for example, the Wi-Fi
+connect hangs in esp-radio 1.0.0-beta.1. So `Cargo.toml` pins esp-hal, esp-rtos,
+esp-radio, esp-alloc, esp-println, esp-backtrace and esp-bootloader-esp-idf to a single
+esp-hal `main` commit with `[patch.crates-io]`. The first build downloads that commit from
+GitHub.
+
 ## Running a demo
 
 Every demo is its own binary in `src/bin/`. Build in release mode, which the PSRAM
@@ -35,7 +41,9 @@ Log verbosity follows `ESP_LOG` (default `info`), for example
 |------|----------|
 | `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus and RGB LED setup |
 | `src/buttons.rs` | Debounced decoder for the four ADC-ladder buttons, plus the BOOT button (GPIO61) |
+| `src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
 | `src/bin/NN_*.rs` | The demos |
+| `vendor/libmudtelnet-rs` | Local copy of the telnet parser with its `no_std` build fixed (see demo 05) |
 | `src/bin/hello_wifi.rs` | The original project template (Wi-Fi controller init plus a log loop) |
 
 ## Demos
@@ -85,9 +93,9 @@ cargo run --release --bin 01_buttons
 ```
 
 > **Known issue:** the button presses are not detected yet. On this board the esp-hal
-> ESP32-S31 ADC driver returns 0 for every conversion after the first, in esp-hal 1.2.2
-> and on the current `main` branch alike. The wiring is fine: GPIO42 reads high (3.3 V)
-> as a digital input. The driver is under investigation.
+> ESP32-S31 ADC driver returns 0 for every conversion after the first. That happens with
+> esp-hal 1.2.2 and with the pinned `main` commit. The wiring is fine: GPIO42 reads high
+> (3.3 V) as a digital input. The driver is under investigation.
 
 The PLAY, SET, VOL- and VOL+ buttons share a single ADC pin (GPIO42, ADC1 channel 0).
 Each button pulls a 10 kΩ pull-up down to its own voltage:
@@ -176,3 +184,108 @@ INFO - auto-advance off
 INFO - effect: rainbow
 INFO - brightness 96
 ```
+
+### 04 – Wi-Fi, DHCP, DNS and NTP
+
+```bash
+cargo run --release --bin 04_wifi
+```
+
+The Wi-Fi credentials are compiled into the firmware from the `WIFI_SSID` and
+`WIFI_PASSWORD` environment variables. There are two ways to set them:
+
+- **Credentials file:** copy `.cargo/wifi.toml.example` to `.cargo/wifi.toml` and fill
+  it in. The file is gitignored, and cargo reads it on every build.
+- **Environment variables:**
+  `WIFI_SSID='my network' WIFI_PASSWORD='secret' cargo run --release --bin 04_wifi`.
+
+Cargo rebuilds automatically when the credentials change. Leave out `WIFI_PASSWORD`, or
+set it to an empty string, for an open network. Only
+WPA2-Personal and open networks are supported; WPA3-only networks will not connect. The
+ESP32-S31 supports 2.4 GHz only.
+
+What the demo does:
+
+1. Starts the Wi-Fi radio (esp-radio) and scans for networks, listing up to 15 with
+   signal strength, channel and security type.
+2. Connects to `WIFI_SSID`, warning first if the scan did not see that network. A
+   background task reconnects every 5 s if the connection fails or drops. An attempt that
+   gets no answer from the driver within 30 s is cancelled and retried.
+3. Gets an IP address, gateway and DNS server over DHCP (embassy-net).
+4. Looks up `towel.blinkenlights.nl` in DNS, the host demo 05 will connect to.
+5. Fetches the time from `pool.ntp.org` with a minimal SNTP request over UDP.
+6. Every 10 seconds prints the current UTC time (NTP time plus the time elapsed since)
+   and the IP address. If NTP failed, it is retried each round instead.
+
+Without `WIFI_SSID` the demo only runs the scan and then prints how to rebuild with
+credentials. That is a quick way to check the radio without a network.
+
+To see the Wi-Fi driver's own log while debugging a connection, add
+`ESP_LOG=info,esp_radio=debug` in front of the `cargo run` command.
+
+Expected output (values are examples):
+
+```
+INFO - === Demo 04: Wi-Fi, DHCP, DNS, NTP ===
+INFO - Station configured for 'my network' (WPA2-Personal)
+INFO - Scanning...
+INFO - Found 14 access point(s):
+INFO -    -37 dBm  ch 11  my network                       Some(Wpa2Personal)
+INFO -    -64 dBm  ch  1  neighbour                        Some(Wpa2Personal)
+...
+INFO - Wi-Fi connecting...
+INFO - Wi-Fi connected to 'my network' (channel 11, RSSI -38 dBm)
+INFO - Waiting for DHCP...
+INFO - DHCP: address 192.168.1.42/24, gateway Some(192.168.1.1), DNS [192.168.1.1]
+INFO - DNS: towel.blinkenlights.nl -> [...]
+INFO - NTP: 2026-10-27 15:00:31 UTC (1792940431)
+INFO - 2026-10-27 15:00:41 UTC | IP Some(192.168.1.42/24)
+```
+
+The Wi-Fi driver needs about 60 KiB of internal RAM, so this demo adds a 96 KiB internal
+heap on top of the small default one.
+
+### 05 – Star Wars over telnet (console)
+
+```bash
+cargo run --release --bin 05_telnet_starwars
+```
+
+Plays the ASCII-art Star Wars movie served by `towel.blinkenlights.nl` in the terminal
+running the serial monitor. It uses the same Wi-Fi credentials as demo 04
+(`.cargo/wifi.toml` or the `WIFI_SSID` and `WIFI_PASSWORD` environment variables).
+
+How it works:
+
+1. Connects to Wi-Fi, gets an address over DHCP and resolves `towel.blinkenlights.nl`.
+2. Opens a TCP connection to port 23 (telnet).
+3. Feeds everything it receives into the
+   [`libmudtelnet-rs`](https://crates.io/crates/libmudtelnet-rs) parser. The parser
+   strips the telnet commands and answers the server's option requests by refusing them.
+4. Writes the remaining data, including its ANSI cursor-movement codes, straight to the
+   UART. The terminal running `espflash monitor` interprets those codes, so the frames
+   animate in place.
+5. When the server closes the connection, or no data arrives for 60 s, it logs the
+   session length and reconnects after 10 s. The movie then starts again.
+
+Make the terminal window at least 80×24 characters. Press `Ctrl+C` to quit the monitor.
+
+Expected output before the movie starts:
+
+```
+INFO - === Demo 05: Star Wars over telnet (towel.blinkenlights.nl:23) ===
+INFO - Waiting for network...
+INFO - Wi-Fi connecting...
+INFO - Wi-Fi connected to 'my network' (channel 11, RSSI -41 dBm)
+INFO - IP address 192.168.1.42/24
+INFO - Make the terminal at least 80x24. Press Ctrl+C to quit the monitor.
+INFO - Connecting to 213.136.8.188:23...
+INFO - Connected, the movie starts in a moment.
+```
+
+About the vendored telnet crate: `libmudtelnet-rs` 2.0.10 claims `no_std` support, but it
+depends on `bytes` with default features, which pulls in `std`. That makes it fail on
+`riscv32imafc-unknown-none-elf` with "can't find crate for `std`". `vendor/libmudtelnet-rs`
+is an unmodified copy of 2.0.10 with only that dependency changed to
+`default-features = false`, plus the test and example targets removed. `Cargo.toml` uses
+it through `[patch.crates-io]`. Once a fixed release is published, the patch can be dropped.

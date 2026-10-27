@@ -39,7 +39,7 @@ async fn main(_spawner: Spawner) -> ! {
     let peripherals = board::init();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    esp_rtos::start(timg0.timer0);
 
     info!("=== ESP32-S31-Korvo-1 bring-up ===");
     let rev = efuse::chip_revision();

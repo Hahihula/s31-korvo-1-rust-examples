@@ -1,0 +1,5 @@
+# Copy to .cargo/wifi.toml (gitignored) and fill in your network.
+# Cargo passes these to the build; the network demos read them with option_env!.
+[env]
+WIFI_SSID = "my network"
+WIFI_PASSWORD = "my password"

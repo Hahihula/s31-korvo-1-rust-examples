@@ -39,7 +39,7 @@ pub mod i2c_addr {
 
 /// Initialises logging, the HAL with maximum CPU clock and a small internal heap.
 ///
-/// The caller still has to start `esp_rtos` with `TIMG0` and `FROM_CPU_INTR0`.
+/// The caller still has to start `esp_rtos` with a `TIMG0` timer.
 pub fn init() -> Peripherals {
     esp_println::logger::init_logger_from_env();
 
