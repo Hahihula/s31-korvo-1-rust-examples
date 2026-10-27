@@ -15,9 +15,10 @@
 //! - PSRAM bandwidth has little headroom. When heavy CPU traffic starves the
 //!   DMA, the LCD keeps its timing while the data falls behind, and the picture
 //!   stays shifted from then on. Restarting the stream every frame to realign
-//!   it makes the panel flicker, so instead the stream only starts with the
-//!   first [`Display::present`]: draw the initial screen before that call. After
-//!   a large redraw, [`Display::resync`] realigns the stream (one short blink).
+//!   it makes the panel flicker. Instead the stream only starts with the first
+//!   [`Display::present`] (draw the initial screen before that call), and
+//!   `present` checks the DMA position at every VSYNC and restarts the stream
+//!   only when it has drifted (one short blink).
 //!
 //! Timing follows `SUB_BOARD3_800_480_PANEL_35HZ_RGB_TIMING` from Espressif's
 //! esp-bsp: 18 MHz pixel clock, HSYNC 40/40/48, VSYNC 23/32/13
@@ -73,7 +74,22 @@ const BURST: BurstConfig = BurstConfig {
 const VSYNC_TIMEOUT: Duration = Duration::from_millis(100);
 /// Largest descriptor chunk that keeps every chunk burst-aligned.
 const CHUNK: usize = 4096 - 64;
-const DESCRIPTORS: usize = descriptor_count(FRAME_BYTES, CHUNK);
+/// The first row is split into small descriptors so the DMA position read at
+/// VSYNC resolves drift down to 32 pixels.
+const FINE_CHUNK: usize = 64;
+const FINE_DESCRIPTORS: usize = ROW_BYTES / FINE_CHUNK;
+const DESCRIPTORS: usize = FINE_DESCRIPTORS + descriptor_count(FRAME_BYTES - ROW_BYTES, CHUNK);
+
+/// Byte offset and length of ring descriptor `i`.
+const fn chunk(i: usize) -> (usize, usize) {
+    if i < FINE_DESCRIPTORS {
+        (i * FINE_CHUNK, FINE_CHUNK)
+    } else {
+        let offset = ROW_BYTES + (i - FINE_DESCRIPTORS) * CHUNK;
+        let left = FRAME_BYTES - offset;
+        (offset, if left < CHUNK { left } else { CHUNK })
+    }
+}
 
 /// The LCD connector pins (DB0-4 blue, DB5-10 green, DB11-15 red).
 pub struct LcdPins<'d> {
@@ -213,6 +229,12 @@ enum Scanout<'d> {
 
 pub struct Display<'d> {
     scanout: Scanout<'d>,
+    /// Address of the first ring descriptor, to locate the DMA in the ring.
+    first_descriptor: usize,
+    /// DMA position at VSYNC right after the last (re)start; any other value
+    /// at a later VSYNC means the stream has drifted.
+    reference: Option<usize>,
+    resyncs: u32,
     framebuffer: *mut u8,
     /// Rows `start..end` written since the last `present`.
     dirty: Option<(usize, usize)>,
@@ -246,8 +268,7 @@ impl<'d> Display<'d> {
         let mut descriptors = DESC.take().get_mut().unsize();
         let first = descriptors.as_mut_ptr();
         for (i, desc) in descriptors.iter_mut().enumerate() {
-            let offset = i * CHUNK;
-            let len = CHUNK.min(FRAME_BYTES - offset);
+            let (offset, len) = chunk(i);
             desc.set_owner(Owner::Dma);
             desc.set_suc_eof(false);
             desc.set_size(len);
@@ -293,6 +314,9 @@ impl<'d> Display<'d> {
 
         Ok(Self {
             scanout: Scanout::Idle(dpi, ring),
+            first_descriptor: first as usize,
+            reference: None,
+            resyncs: 0,
             framebuffer,
             dirty: None,
         })
@@ -325,6 +349,11 @@ impl<'d> Display<'d> {
     /// Makes the changes since the last call visible (cache write-back of the
     /// touched rows) and waits for the start of the next frame. The first call
     /// starts the continuous refresh.
+    ///
+    /// At every VSYNC the DMA position in the ring is compared with the one
+    /// seen right after the stream started. If it differs, the stream has
+    /// drifted (PSRAM fell behind the LCD) and is restarted: one blink instead
+    /// of a permanently shifted picture.
     pub async fn present(&mut self) -> Result<(), DisplayError> {
         if let Some((start, end)) = self.dirty.take() {
             let rows = &self.pixels()[start * ROW_BYTES..end * ROW_BYTES];
@@ -343,14 +372,46 @@ impl<'d> Display<'d> {
                     );
                     return self.restart();
                 }
+                // During vertical blanking the DMA has filled the FIFOs and
+                // waits, so an aligned stream is always at the same position.
+                let position = self.dma_descriptor_index();
+                match self.reference {
+                    None => self.reference = Some(position),
+                    Some(reference) if reference != position => {
+                        self.resyncs += 1;
+                        log::warn!(
+                            "display: stream drifted (descriptor {position}, expected \
+                             {reference}), resync #{}",
+                            self.resyncs
+                        );
+                        return self.restart();
+                    }
+                    Some(_) => {}
+                }
                 Ok(())
             }
             _ => self.restart(),
         }
     }
 
-    /// Realigns the stream with the screen after a large redraw (see the
-    /// module docs). The panel blinks once.
+    /// Index of the ring descriptor the DMA is reading right now.
+    fn dma_descriptor_index(&self) -> usize {
+        let current = esp_hal::peripherals::AXI_GDMA::regs()
+            .out_ch(0)
+            .out_dscr()
+            .read()
+            .bits() as usize;
+        current.wrapping_sub(self.first_descriptor) / core::mem::size_of::<DmaDescriptor>()
+    }
+
+    /// Number of automatic realignments so far (see [`Self::present`]).
+    pub fn resyncs(&self) -> u32 {
+        self.resyncs
+    }
+
+    /// Realigns the stream with the screen (see the module docs); the panel
+    /// blinks once. [`Self::present`] already does this whenever it detects
+    /// drift, so this is only needed to force it.
     pub async fn resync(&mut self) -> Result<(), DisplayError> {
         if let Scanout::Running(transfer) = &mut self.scanout {
             let _ = with_timeout(VSYNC_TIMEOUT, transfer.wait_for_vsync()).await;
@@ -360,6 +421,7 @@ impl<'d> Display<'d> {
 
     /// (Re)starts the ring transfer from the start of the frame buffer.
     fn restart(&mut self) -> Result<(), DisplayError> {
+        self.reference = None;
         let (dpi, ring) = match core::mem::replace(&mut self.scanout, Scanout::Switching) {
             Scanout::Running(transfer) => transfer.stop(),
             Scanout::Idle(dpi, ring) => (dpi, ring),

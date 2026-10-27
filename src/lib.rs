@@ -9,3 +9,4 @@ pub mod board;
 pub mod buttons;
 pub mod display;
 pub mod net;
+pub mod terminal;

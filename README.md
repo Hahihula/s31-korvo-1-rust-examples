@@ -39,9 +39,10 @@ Log verbosity follows `ESP_LOG` (default `info`), for example
 
 | Path | Contents |
 |------|----------|
-| `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus, RGB LED setup and PSRAM split |
+| `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus, RGB LED setup and PSRAM mapping (`psram_reserve`, `psram_split`) |
 | `src/buttons.rs` | Debounced decoder for the four ADC-ladder buttons, plus the BOOT button (GPIO61) |
 | `src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
+| `src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator and an incremental renderer for the LCD |
 | `src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
 | `src/bin/NN_*.rs` | The demos |
 | `vendor/libmudtelnet-rs` | Local copy of the telnet parser with its `no_std` build fixed (see demo 05) |
@@ -334,6 +335,8 @@ How it works:
   so other tasks run meanwhile.
 - **Draw first, then present:** the stream starts with the first `present()` call. Draw
   the initial screen before that. See the pitfalls below for why.
+- **Self-correcting:** if the picture ever drifts, `present()` notices at the next frame
+  start and realigns it with one short blink.
 - **Timing:** the panel values come from Espressif's esp-bsp
   (`SUB_BOARD3_800_480_PANEL_35HZ_RGB_TIMING`): 18 MHz pixel clock, HSYNC 40/40/48 and
   VSYNC 23/32/13 (pulse / back porch / front porch).
@@ -348,12 +351,72 @@ pinned esp-hal `main`):
 - **Restarting every frame:** restarting the stream at each VSYNC to stay aligned
   makes the picture blink, because the restart lands at a slightly different time
   each frame.
-- **Heavy drawing during scan-out:** PSRAM has little headroom here. esp-hal runs it
+- **PSRAM falling behind the LCD:** PSRAM has little headroom here. esp-hal runs it
   octal at 200 MHz, and we measured about 55 MB/s for DMA against the 36 MB/s the panel
-  needs. Rewriting the whole frame while it is being scanned out starves the DMA; the
-  LCD keeps its timing and the picture ends up permanently shifted. Drawing the first
-  screen before the stream starts avoids that. After a full-screen redraw,
-  `Display::resync()` realigns the stream at the cost of one blink.
+  needs. Heavy drawing, Wi-Fi activity or even logging (formatting code fetched from
+  flash) can starve the DMA for a moment. The LCD keeps its timing, the data falls
+  behind, and without a fix the picture stays shifted from then on, sideways first,
+  then down the screen as it adds up. Two things handle this:
+  - **Draw first, then present:** the stream starts with the first `present()`, so the
+    initial screen is drawn while the DMA is idle.
+  - **Automatic resync:** during vertical blanking the DMA fills its FIFOs and waits,
+    so an aligned stream is always at the same ring position at VSYNC. The first row
+    of the ring uses 64-byte descriptors (32 pixels), so `present()` can read the
+    position from the AXI DMA's `OUT_DSCR` register precisely. When the position
+    differs from the one recorded right after the start, `present()` restarts the
+    stream: one short blink instead of a shifted picture. `Display::resyncs()` counts
+    these.
 - **Pixel clock:** the panel shows nothing usable at 6 or 9 MHz. Keep it at 18 MHz.
 - **Internal-RAM bursts:** keep them enabled (`InternalBurstConfig::Enabled`) for the
   descriptors.
+
+### 10 – Star Wars over telnet (LCD)
+
+```bash
+cargo run --release --bin 10_starwars_lcd
+```
+
+The same stream as demo 05, rendered on the LCD instead of the serial console. It uses
+the Wi-Fi credentials from demo 04 (`.cargo/wifi.toml`, or the `WIFI_SSID` and
+`WIFI_PASSWORD` environment variables).
+
+How it works:
+
+- **Telnet task:** connects to `towel.blinkenlights.nl:23` and runs the stream through
+  `libmudtelnet-rs`. The text goes into an 80×24 terminal emulator (`src/terminal.rs`).
+  The emulator understands cursor positioning, the erase-screen and erase-line codes,
+  cursor moves, CR/LF, backspace and tab. It ignores colour codes and anything it does
+  not know.
+- **Display loop:** each frame it copies the 1,920-character grid under a mutex. It then
+  redraws only the characters that differ from what is on the panel, using the 10×20
+  font, so 80×24 characters fill the 800×480 panel exactly.
+- **Redraw cap:** at most 240 characters are redrawn per frame, about 96 KB of PSRAM
+  writes. A full scene change therefore settles within a quarter of a second without
+  starving the LCD's DMA (see the demo 08 pitfalls).
+- **Status messages:** Wi-Fi, connecting, errors and reconnects appear on the panel as
+  well as on the console. When the server closes the connection, or nothing arrives
+  for 60 s, the demo reconnects after 10 s.
+- **No PSRAM heap:** only the frame buffer is taken from PSRAM (`board::psram_reserve`),
+  so all Wi-Fi memory stays in internal RAM.
+
+Without credentials, the panel shows a hint to set `WIFI_SSID` and nothing else
+happens.
+
+Expected console output:
+
+```
+INFO - === Demo 10: Star Wars over telnet on the LCD ===
+INFO - PSRAM size: 16 MB
+INFO - Connecting to Wi-Fi...
+INFO - Wi-Fi connecting...
+INFO - Waiting for the network...
+INFO - Wi-Fi connected to 'my network' (channel 11, RSSI -41 dBm)
+INFO - Resolving host name...
+INFO - Connecting...
+INFO - Connected to 213.136.8.188:23
+INFO - display: 35 fps, 0 resyncs so far
+```
+
+If PSRAM falls behind (most likely while Wi-Fi is busy), the console shows
+`display: stream drifted ..., resync #N` and the panel blinks once instead of staying
+shifted.

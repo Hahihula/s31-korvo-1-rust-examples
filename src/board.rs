@@ -47,9 +47,10 @@ pub fn init() -> Peripherals {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    // Not `#[esp_hal::ram(reclaimed)]`: on the ESP32-S31, heap data in the
-    // reclaimed bootloader RAM (0x2F06CFB0..0x2F07CFB0) broke the PSRAM frame
-    // buffer DMA of the LCD (the panel faded to black while the CPU ran on).
+    // Plain RAM instead of the template's `#[esp_hal::ram(reclaimed)]`: on the
+    // ESP32-S31 the reclaimed bootloader RAM starts at 0x2F06CFB0, where the ROM
+    // symbol table places `g_shared_buffers`. Nothing has been seen to break
+    // there, but ROM code may still use that RAM after boot.
     esp_alloc::heap_allocator!(size: 16 * 1024);
 
     peripherals
@@ -83,12 +84,23 @@ pub fn rgb_led<'d>(rmt: RMT<'d>, pin: GPIO37<'d>) -> Result<RgbLed<'d>, esp_hal_
     RmtSmartLeds::new(WS2812B_TIMING, rmt.channel0, pin, RMT_FREQ)
 }
 
-/// Maps the 16 MB PSRAM, hands the first `reserve` bytes (rounded up to a
-/// 64-byte cache line) to the caller, e.g. as a DMA frame buffer, and adds the
-/// rest to the heap.
+/// Maps the 16 MB PSRAM and hands the first `reserve` bytes (rounded up to a
+/// 64-byte cache line) to the caller, e.g. as a DMA frame buffer. The rest of
+/// PSRAM stays unused.
 ///
-/// Call at most once.
+/// Call at most once (and not together with [`psram_split`]).
+pub fn psram_reserve(psram: PSRAM<'static>, reserve: usize) -> &'static mut [u8] {
+    psram_map(psram, reserve, false)
+}
+
+/// Like [`psram_reserve`], but adds the rest of PSRAM to the heap.
+///
+/// Call at most once (and not together with [`psram_reserve`]).
 pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> &'static mut [u8] {
+    psram_map(psram, reserve, true)
+}
+
+fn psram_map(psram: PSRAM<'static>, reserve: usize, rest_to_heap: bool) -> &'static mut [u8] {
     let psram = Psram::new(psram, Default::default());
     let (start, size) = psram.raw_parts();
     let reserve = reserve.next_multiple_of(64).min(size);
@@ -97,7 +109,7 @@ pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> &'static mut [u8] {
     // program, nothing else uses it, and the heap only gets the part after
     // `reserve`.
     unsafe {
-        if size > reserve {
+        if rest_to_heap && size > reserve {
             esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
                 start.add(reserve),
                 size - reserve,
