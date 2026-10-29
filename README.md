@@ -390,9 +390,12 @@ How it works:
 - **Display loop:** each frame it copies the 1,920-character grid under a mutex. It then
   redraws only the characters that differ from what is on the panel, using the 10×20
   font, so 80×24 characters fill the 800×480 panel exactly.
-- **Redraw cap:** at most 240 characters are redrawn per frame, about 96 KB of PSRAM
-  writes. A full scene change therefore settles within a quarter of a second without
-  starving the LCD's DMA (see the demo 08 pitfalls).
+- **Redraw cap:** at most 80 characters are redrawn per frame. Each character row is only
+  20 bytes wide, so the CPU cache first reads the whole 64-byte line from PSRAM before
+  writing. At 240 characters per frame, those reads still made the LCD stream drift in
+  busy scenes; at 80, a full scene change settles in about 0.7 s. Characters are
+  copied from glyphs pre-rendered into internal RAM, so no font data is read from
+  flash.
 - **Status messages:** Wi-Fi, connecting, errors and reconnects appear on the panel as
   well as on the console. When the server closes the connection, or nothing arrives
   for 60 s, the demo reconnects after 10 s.

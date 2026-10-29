@@ -26,7 +26,7 @@
 
 use core::convert::Infallible;
 
-use embassy_time::{Duration, with_timeout};
+use embassy_time::{Duration, Instant, with_timeout};
 use embedded_graphics::{
     Pixel,
     pixelcolor::{Rgb565, raw::RawU16},
@@ -70,6 +70,8 @@ const BURST: BurstConfig = BurstConfig {
     external_memory: ExternalBurstConfig::Size64,
     internal_memory: InternalBurstConfig::Enabled,
 };
+/// Drift warnings are summarised at most this often.
+const DRIFT_LOG_INTERVAL: Duration = Duration::from_secs(5);
 /// Upper bound for waiting on a VSYNC (a frame takes ~28 ms).
 const VSYNC_TIMEOUT: Duration = Duration::from_millis(100);
 /// Largest descriptor chunk that keeps every chunk burst-aligned.
@@ -235,6 +237,8 @@ pub struct Display<'d> {
     /// at a later VSYNC means the stream has drifted.
     reference: Option<usize>,
     resyncs: u32,
+    unreported_resyncs: u32,
+    last_drift_log: Instant,
     framebuffer: *mut u8,
     /// Rows `start..end` written since the last `present`.
     dirty: Option<(usize, usize)>,
@@ -317,6 +321,8 @@ impl<'d> Display<'d> {
             first_descriptor: first as usize,
             reference: None,
             resyncs: 0,
+            unreported_resyncs: 0,
+            last_drift_log: Instant::now(),
             framebuffer,
             dirty: None,
         })
@@ -346,51 +352,83 @@ impl<'d> Display<'d> {
         }
     }
 
-    /// Makes the changes since the last call visible (cache write-back of the
-    /// touched rows) and waits for the start of the next frame. The first call
-    /// starts the continuous refresh.
+    /// Waits for the start of the next frame, then makes the changes since
+    /// the last call visible by writing the touched rows back from the CPU
+    /// cache. The first call starts the continuous refresh.
     ///
-    /// At every VSYNC the DMA position in the ring is compared with the one
-    /// seen right after the stream started. If it differs, the stream has
+    /// The write-back happens right after VSYNC, during vertical blanking
+    /// (~3.5 ms), when the LCD is not reading pixels, so it does not compete
+    /// with the scan-out for PSRAM bandwidth. Keep the amount drawn per frame
+    /// moderate (around 100 KB) so it fits.
+    ///
+    /// At every VSYNC the DMA position in the ring is also compared with the
+    /// one seen right after the stream started. If it differs, the stream has
     /// drifted (PSRAM fell behind the LCD) and is restarted: one blink instead
-    /// of a permanently shifted picture.
+    /// of a permanently shifted picture. See [`Self::resyncs`].
     pub async fn present(&mut self) -> Result<(), DisplayError> {
+        let vsync = match &mut self.scanout {
+            Scanout::Running(transfer) => {
+                with_timeout(VSYNC_TIMEOUT, transfer.wait_for_vsync()).await
+            }
+            _ => {
+                self.flush_dirty();
+                return self.restart();
+            }
+        };
+        if vsync.is_err() {
+            // A frame takes ~28 ms; without VSYNC the LCD has stopped.
+            log::warn!(
+                "display: no VSYNC within {} ms, restarting",
+                VSYNC_TIMEOUT.as_millis()
+            );
+            self.flush_dirty();
+            return self.restart();
+        }
+
+        // During vertical blanking the DMA has filled the FIFOs and waits, so
+        // an aligned stream is always at the same position. Read it before
+        // the write-back below adds PSRAM traffic.
+        let position = self.dma_descriptor_index();
+        let drifted = match self.reference {
+            None => {
+                self.reference = Some(position);
+                false
+            }
+            Some(reference) => reference != position,
+        };
+
+        self.flush_dirty();
+
+        if drifted {
+            self.note_resync();
+            return self.restart();
+        }
+        Ok(())
+    }
+
+    /// Writes the rows touched since the last call back to PSRAM.
+    fn flush_dirty(&mut self) {
         if let Some((start, end)) = self.dirty.take() {
             let rows = &self.pixels()[start * ROW_BYTES..end * ROW_BYTES];
             writeback(rows);
         }
-        match &mut self.scanout {
-            Scanout::Running(transfer) => {
-                // A frame takes ~28 ms; without VSYNC the LCD has stopped.
-                if with_timeout(VSYNC_TIMEOUT, transfer.wait_for_vsync())
-                    .await
-                    .is_err()
-                {
-                    log::warn!(
-                        "display: no VSYNC within {} ms, restarting",
-                        VSYNC_TIMEOUT.as_millis()
-                    );
-                    return self.restart();
-                }
-                // During vertical blanking the DMA has filled the FIFOs and
-                // waits, so an aligned stream is always at the same position.
-                let position = self.dma_descriptor_index();
-                match self.reference {
-                    None => self.reference = Some(position),
-                    Some(reference) if reference != position => {
-                        self.resyncs += 1;
-                        log::warn!(
-                            "display: stream drifted (descriptor {position}, expected \
-                             {reference}), resync #{}",
-                            self.resyncs
-                        );
-                        return self.restart();
-                    }
-                    Some(_) => {}
-                }
-                Ok(())
-            }
-            _ => self.restart(),
+    }
+
+    /// Counts a resync and reports at most one summary line per
+    /// [`DRIFT_LOG_INTERVAL`]: formatting log lines runs code from flash, which
+    /// itself competes with the DMA.
+    fn note_resync(&mut self) {
+        self.resyncs += 1;
+        self.unreported_resyncs += 1;
+        if self.last_drift_log.elapsed() >= DRIFT_LOG_INTERVAL {
+            log::warn!(
+                "display: stream drifted {} times in the last {} s, resynced ({} total)",
+                self.unreported_resyncs,
+                self.last_drift_log.elapsed().as_secs(),
+                self.resyncs
+            );
+            self.unreported_resyncs = 0;
+            self.last_drift_log = Instant::now();
         }
     }
 
@@ -454,6 +492,21 @@ impl Canvas<'_> {
             Some((s, e)) => (s.min(start), e.max(end)),
             None => (start, end),
         });
+    }
+
+    /// Copies a `width` x `height` block of RGB565 little-endian pixels
+    /// (row-major, `width * 2` bytes per row) to `(x, y)`. Blocks that do not
+    /// fit on the panel are skipped.
+    pub fn blit(&mut self, x: usize, y: usize, width: usize, height: usize, pixels: &[u8]) {
+        let row_len = width * 2;
+        if x + width > WIDTH || y + height > HEIGHT || pixels.len() < row_len * height {
+            return;
+        }
+        for (row, src) in pixels.chunks_exact(row_len).take(height).enumerate() {
+            let dst = ((y + row) * WIDTH + x) * 2;
+            self.buf[dst..dst + row_len].copy_from_slice(src);
+        }
+        self.mark(y, y + height);
     }
 
     #[inline]

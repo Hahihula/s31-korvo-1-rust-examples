@@ -6,21 +6,33 @@
 //! unknown sequences are parsed and ignored.
 //!
 //! [`TerminalView`] draws the grid with the 10x20 font, which makes 80x24
-//! characters exactly fill the 800x480 panel. It only redraws cells that
-//! changed, and at most [`TerminalView::CELLS_PER_FRAME`] per call, to keep
-//! the PSRAM traffic during scan-out low (see the `display` module docs).
+//! characters exactly fill the 800x480 panel. The glyphs are rendered once
+//! into internal RAM, so drawing a character is a plain memory copy with no
+//! font data read from flash (flash shares the cache and memory path with the
+//! PSRAM the LCD streams from). It only redraws cells that changed, and at
+//! most [`TerminalView::CELLS_PER_FRAME`] per call, to keep the PSRAM traffic
+//! low (see the `display` module docs).
+
+use core::convert::Infallible;
 
 use embedded_graphics::{
-    mono_font::{MonoTextStyle, MonoTextStyleBuilder, ascii::FONT_10X20},
-    pixelcolor::Rgb565,
+    Pixel,
+    mono_font::{MonoTextStyleBuilder, ascii::FONT_10X20},
+    pixelcolor::{Rgb565, raw::RawU16},
     prelude::*,
     text::{Baseline, Text},
 };
+use static_cell::ConstStaticCell;
+
+use crate::display::Canvas;
 
 pub const COLS: usize = 80;
 pub const ROWS: usize = 24;
-const CELL_W: i32 = 10;
-const CELL_H: i32 = 20;
+const CELL_W: usize = 10;
+const CELL_H: usize = 20;
+const GLYPH_BYTES: usize = CELL_W * CELL_H * 2;
+/// Printable ASCII, `' '..='~'`.
+const GLYPHS: usize = 95;
 /// Most CSI parameters we keep (e.g. `ESC [ row ; col H` uses two).
 const MAX_PARAMS: usize = 4;
 
@@ -213,36 +225,82 @@ impl Terminal {
     }
 }
 
-/// Draws a [`Grid`] incrementally onto a [`DrawTarget`].
+type GlyphSet = [[u8; GLYPH_BYTES]; GLYPHS];
+
+/// Pre-rendered glyphs, in internal RAM (`.bss`).
+static GLYPH_SET: ConstStaticCell<GlyphSet> = ConstStaticCell::new([[0; GLYPH_BYTES]; GLYPHS]);
+
+/// A one-character [`DrawTarget`] used to render a glyph into RAM.
+struct GlyphTarget<'a>(&'a mut [u8; GLYPH_BYTES]);
+
+impl OriginDimensions for GlyphTarget<'_> {
+    fn size(&self) -> Size {
+        Size::new(CELL_W as u32, CELL_H as u32)
+    }
+}
+
+impl DrawTarget for GlyphTarget<'_> {
+    type Color = Rgb565;
+    type Error = Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>,
+    {
+        for Pixel(point, color) in pixels {
+            if let (Ok(x), Ok(y)) = (usize::try_from(point.x), usize::try_from(point.y))
+                && x < CELL_W
+                && y < CELL_H
+            {
+                let i = (y * CELL_W + x) * 2;
+                self.0[i..i + 2].copy_from_slice(&RawU16::from(color).into_inner().to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Draws a [`Grid`] incrementally onto the display [`Canvas`].
 pub struct TerminalView {
     /// What is currently on the panel.
     shown: Grid,
-    style: MonoTextStyle<'static, Rgb565>,
+    glyphs: &'static GlyphSet,
 }
 
 impl TerminalView {
-    /// Upper bound of cells redrawn per [`Self::draw`] call (~96 KB of pixels).
-    pub const CELLS_PER_FRAME: usize = 240;
+    /// Upper bound of cells redrawn per [`Self::draw`] call (~32 KB of
+    /// pixels). Each glyph row is 20 bytes, so the cache first fills the
+    /// whole 64-byte line from PSRAM; 240 cells per frame (~300 KB of line
+    /// fills) still made the LCD stream drift during busy scenes. A full
+    /// screen change takes ~0.7 s at this rate.
+    pub const CELLS_PER_FRAME: usize = 80;
 
-    /// `shown` starts as all spaces, so the target must start out filled with
-    /// `background`.
+    /// Renders the glyphs in `foreground` on `background`. `shown` starts as
+    /// all spaces, so the panel must start out filled with `background`.
+    ///
+    /// Can only be called once: the glyphs are kept in a static buffer.
     pub fn new(foreground: Rgb565, background: Rgb565) -> Self {
+        let glyphs = GLYPH_SET.take();
+        let style = MonoTextStyleBuilder::new()
+            .font(&FONT_10X20)
+            .text_color(foreground)
+            .background_color(background)
+            .build();
+        for (glyph, ch) in glyphs.iter_mut().zip(b' '..=b'~') {
+            let text = [ch];
+            let text = core::str::from_utf8(&text).unwrap_or(" ");
+            let _ = Text::with_baseline(text, Point::zero(), style, Baseline::Top)
+                .draw(&mut GlyphTarget(glyph));
+        }
         Self {
             shown: [[b' '; COLS]; ROWS],
-            style: MonoTextStyleBuilder::new()
-                .font(&FONT_10X20)
-                .text_color(foreground)
-                .background_color(background)
-                .build(),
+            glyphs,
         }
     }
 
     /// Redraws up to [`Self::CELLS_PER_FRAME`] cells where `grid` differs from
     /// the panel and returns how many differing cells are left.
-    pub fn draw<D>(&mut self, grid: &Grid, target: &mut D) -> usize
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
+    pub fn draw(&mut self, grid: &Grid, canvas: &mut Canvas<'_>) -> usize {
         let mut budget = Self::CELLS_PER_FRAME;
         let mut left = 0;
         for (row, (want, have)) in grid.iter().zip(self.shown.iter_mut()).enumerate() {
@@ -255,10 +313,14 @@ impl TerminalView {
                     continue;
                 }
                 budget -= 1;
-                let glyph = [w];
-                let text = core::str::from_utf8(&glyph).unwrap_or(" ");
-                let origin = Point::new(col as i32 * CELL_W, row as i32 * CELL_H);
-                let _ = Text::with_baseline(text, origin, self.style, Baseline::Top).draw(target);
+                let index = usize::from(w.clamp(b' ', b'~') - b' ');
+                canvas.blit(
+                    col * CELL_W,
+                    row * CELL_H,
+                    CELL_W,
+                    CELL_H,
+                    &self.glyphs[index],
+                );
                 *h = w;
             }
         }
