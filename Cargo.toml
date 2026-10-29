@@ -82,8 +82,9 @@ esp-alloc              = { git = "https://github.com/esp-rs/esp-hal", rev = "33f
 esp-println            = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6" }
 esp-backtrace          = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6" }
 esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6" }
-# Published 2.0.10 enables `bytes/std`, which breaks no_std builds; see vendor/.
-libmudtelnet-rs        = { path = "vendor/libmudtelnet-rs" }
+# Published 2.0.10 enables `bytes/std`, which breaks no_std builds. Fixed on
+# this fork branch (fix/no-std-bytes); drop once the fix is released upstream.
+libmudtelnet-rs        = { git = "https://github.com/Hahihula/libmudtelnet-rs", rev = "192001c81a587d1d4d8638879ad41e532709f821" }
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
 [profile.dev]

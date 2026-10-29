@@ -1432,6 +1432,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 [[package]]
 name = "libmudtelnet-rs"
 version = "2.0.10"
+source = "git+https://github.com/Hahihula/libmudtelnet-rs?rev=192001c81a587d1d4d8638879ad41e532709f821#192001c81a587d1d4d8638879ad41e532709f821"
 dependencies = [
  "bytes",
 ]

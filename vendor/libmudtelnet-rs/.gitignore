@@ -1,9 +1,0 @@
-.DS_Store
-
-/target
-/.vimrc
-/.idea
-/.vscode
-/result
-/.direnv
-/compat/target

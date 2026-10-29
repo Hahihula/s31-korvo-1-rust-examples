@@ -45,8 +45,6 @@ Log verbosity follows `ESP_LOG` (default `info`), for example
 | `src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator and an incremental renderer for the LCD |
 | `src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
 | `src/bin/NN_*.rs` | The demos |
-| `vendor/libmudtelnet-rs` | Local copy of the telnet parser with its `no_std` build fixed (see demo 05) |
-| `src/bin/hello_wifi.rs` | The original project template (Wi-Fi controller init plus a log loop) |
 
 ## Demos
 
@@ -285,12 +283,14 @@ INFO - Connecting to 213.136.8.188:23...
 INFO - Connected, the movie starts in a moment.
 ```
 
-About the vendored telnet crate: `libmudtelnet-rs` 2.0.10 claims `no_std` support, but it
+About the telnet crate: `libmudtelnet-rs` 2.0.10 claims `no_std` support, but it
 depends on `bytes` with default features, which pulls in `std`. That makes it fail on
-`riscv32imafc-unknown-none-elf` with "can't find crate for `std`". `vendor/libmudtelnet-rs`
-is an unmodified copy of 2.0.10 with only that dependency changed to
-`default-features = false`, plus the test and example targets removed. `Cargo.toml` uses
-it through `[patch.crates-io]`. Once a fixed release is published, the patch can be dropped.
+`riscv32imafc-unknown-none-elf` with "can't find crate for `std`". `Cargo.toml` therefore
+patches it to a fork,
+[Hahihula/libmudtelnet-rs @ `192001c`](https://github.com/Hahihula/libmudtelnet-rs/commits/fix/no-std-bytes/),
+which depends on `bytes` with `default-features = false`, forwards the crate's `std`
+feature to `bytes/std`, and adds a CI check for a real no_std target. Once the fix is
+released upstream, the `[patch.crates-io]` entry can be dropped.
 
 ### 08 – RGB LCD
 
