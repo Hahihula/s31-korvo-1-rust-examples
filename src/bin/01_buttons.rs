@@ -15,10 +15,7 @@
 
 use embassy_executor::Spawner;
 use esp_backtrace as _;
-use esp_hal::{
-    analog::adc::{FULL_SCALE, ZERO_DIFF_CODE},
-    timer::timg::TimerGroup,
-};
+use esp_hal::timer::timg::TimerGroup;
 use log::info;
 use s31_rust_examples::{
     board,
@@ -40,12 +37,8 @@ async fn main(_spawner: Spawner) -> ! {
 
     info!("=== Demo 01: buttons (ADC ladder on GPIO42) ===");
     let mut buttons = Buttons::new(peripherals.ADC1, peripherals.GPIO42).expect("ADC init");
-    info!(
-        "ADC calibration: zero={} idle={} full_scale={}",
-        ZERO_DIFF_CODE,
-        buttons.idle_raw(),
-        FULL_SCALE
-    );
+    let (raw, mv) = buttons.sample();
+    info!("Idle: raw {raw} (~{mv} mV; 3.3 V idle clips at ~2000 mV)");
     info!("Press PLAY, SET, VOL- or VOL+.");
 
     let mut counts = [0u32; Button::ALL.len()];

@@ -11,9 +11,13 @@
 //! | SET    | 13 kΩ    | 1.87 V  |
 //! | none   | -        | 3.30 V  |
 //!
-//! The ESP32-S31 ADC has no calibration in esp-hal yet: a grounded input reads
-//! about [`ZERO_DIFF_CODE`]. The idle level (3.3 V) is sampled at start-up and
-//! readings are scaled linearly between those two points.
+//! The ESP32-S31 SAR ADC is differential and its scale runs backwards: a
+//! grounded input reads about [`ZERO_DIFF_CODE`] (2198), and higher voltages
+//! give *lower* codes, about 0.91 mV per code, down to 0 at roughly 2 V. The
+//! idle level (3.3 V) is above that range and reads 0, while all four buttons
+//! are below 2 V. (Conversion taken from
+//! <https://github.com/playfulFence/esp-touch-paint>; esp-hal has no S31 ADC
+//! calibration yet.)
 //!
 //! The BOOT button (GPIO61) is a plain digital input and is handled by
 //! [`BootButton`]. It is also a strapping pin: holding it during reset enters
@@ -22,15 +26,16 @@
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     Blocking,
-    analog::adc::{
-        Adc, AdcConfig, AdcPin, Attenuation, Error as AdcError, FULL_SCALE, ZERO_DIFF_CODE,
-    },
+    analog::adc::{Adc, AdcConfig, AdcPin, Attenuation, Error as AdcError, FULL_SCALE},
     gpio::{Input, InputConfig, Pull},
     peripherals::{ADC1, GPIO42, GPIO61},
 };
 
-/// Supply voltage of the ladder pull-up.
-const IDLE_MV: u32 = 3300;
+#[cfg(doc)]
+use esp_hal::analog::adc::ZERO_DIFF_CODE;
+
+/// Input voltage at raw code 0; the scale spans twice this over [`FULL_SCALE`].
+const RANGE_MV: u32 = 2000;
 /// Poll period of the ladder.
 const POLL: Duration = Duration::from_millis(10);
 /// Number of equal consecutive polls before a state change is accepted.
@@ -60,13 +65,14 @@ impl Button {
         self as usize
     }
 
-    /// Maps a ladder voltage to a button, splitting halfway between nominal levels.
+    /// Maps a ladder voltage to a button, splitting halfway between nominal
+    /// levels. Idle (3.3 V) clips to about 2000 mV, just above SET (1.87 V).
     pub const fn from_millivolts(mv: u32) -> Option<Button> {
         match mv {
             0..600 => Some(Button::VolUp),
             600..1080 => Some(Button::VolDown),
-            1080..1600 => Some(Button::Play),
-            1600..2580 => Some(Button::Set),
+            1080..1605 => Some(Button::Play),
+            1605..1940 => Some(Button::Set),
             _ => None,
         }
     }
@@ -78,10 +84,15 @@ pub enum Event {
     Released { button: Button, held: Duration },
 }
 
+/// Estimated pin voltage in millivolts for a raw S31 ADC code (see the module
+/// docs); clips at about 2000 mV.
+pub const fn millivolts(raw: u16) -> u32 {
+    RANGE_MV.saturating_sub(raw as u32 * 2 * RANGE_MV / FULL_SCALE as u32)
+}
+
 pub struct Buttons<'d> {
     adc: Adc<'d, ADC1<'d>, Blocking>,
     pin: AdcPin<GPIO42<'d>, ADC1<'d>>,
-    idle_raw: u16,
     state: Option<Button>,
     pressed_at: Instant,
     candidate: Option<Button>,
@@ -89,52 +100,33 @@ pub struct Buttons<'d> {
 }
 
 impl<'d> Buttons<'d> {
-    /// Sets up the ADC and samples the idle level. Keep the buttons released
-    /// during this call.
     pub fn new(adc1: ADC1<'d>, gpio42: GPIO42<'d>) -> Result<Self, AdcError> {
         let mut config = AdcConfig::new();
         // The S31 SAR has a single input range; the attenuation is ignored.
         let pin = config.enable_pin(gpio42, Attenuation::_11dB);
         let adc = Adc::new(adc1, config)?;
-
-        let mut this = Self {
+        Ok(Self {
             adc,
             pin,
-            idle_raw: FULL_SCALE,
             state: None,
             pressed_at: Instant::now(),
             candidate: None,
             candidate_polls: 0,
-        };
-
-        let idle = (0..16).map(|_| this.read_raw()).max().unwrap_or(FULL_SCALE);
-        // A pressed button at boot (or a saturated ADC) gives a bogus idle level.
-        this.idle_raw = if idle > ZERO_DIFF_CODE + 1000 {
-            idle
-        } else {
-            FULL_SCALE
-        };
-        Ok(this)
+        })
     }
 
-    pub fn idle_raw(&self) -> u16 {
-        self.idle_raw
-    }
-
-    /// Average of four conversions. A failed conversion counts as the idle level.
+    /// Average of four conversions. A failed conversion counts as idle (0).
     pub fn read_raw(&mut self) -> u16 {
-        let idle = self.idle_raw;
         let sum: u32 = (0..4)
-            .map(|_| u32::from(self.adc.read_blocking(&mut self.pin).unwrap_or(idle)))
+            .map(|_| u32::from(self.adc.read_blocking(&mut self.pin).unwrap_or(0)))
             .sum();
         (sum / 4) as u16
     }
 
-    /// Estimated pin voltage in millivolts.
-    pub fn millivolts(&self, raw: u16) -> u32 {
-        let span = u32::from(self.idle_raw.saturating_sub(ZERO_DIFF_CODE)).max(1);
-        let above_zero = u32::from(raw.saturating_sub(ZERO_DIFF_CODE));
-        above_zero * IDLE_MV / span
+    /// One averaged reading as `(raw, millivolts)`.
+    pub fn sample(&mut self) -> (u16, u32) {
+        let raw = self.read_raw();
+        (raw, millivolts(raw))
     }
 
     /// Waits for the next debounced press or release.
@@ -142,8 +134,7 @@ impl<'d> Buttons<'d> {
         loop {
             Timer::after(POLL).await;
 
-            let raw = self.read_raw();
-            let mv = self.millivolts(raw);
+            let (raw, mv) = self.sample();
             let reading = Button::from_millivolts(mv);
 
             if reading != self.candidate {

@@ -1,5 +1,10 @@
 # ESP32-S31-Korvo-1 Rust examples
 
+<p align="center">
+  <img src="assets/demo_10.jpg" alt="Star Wars intro text on the Korvo-1 LCD" width="600"><br>
+  <em>Demo 10: Star Wars over telnet on the LCD</em>
+</p>
+
 Bare-metal (`no_std`) Rust demos for the
 [ESP32-S31-Korvo-1 V1.1](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s31/esp32-s31-korvo-1/user_guide.html)
 development board (ESP32-S31-WROOM-3, 16 MB flash, 16 MB PSRAM), built on
@@ -92,46 +97,43 @@ subboard, the touch controller at 0x14 is missing too.
 cargo run --release --bin 01_buttons
 ```
 
-> **Known issue:** the button presses are not detected yet. On this board the esp-hal
-> ESP32-S31 ADC driver returns 0 for every conversion after the first. That happens with
-> esp-hal 1.2.2 and with the pinned `main` commit. The wiring is fine: GPIO42 reads high
-> (3.3 V) as a digital input. The driver is under investigation.
-
 The PLAY, SET, VOL- and VOL+ buttons share a single ADC pin (GPIO42, ADC1 channel 0).
 Each button pulls a 10 kΩ pull-up down to its own voltage:
 
-| Button | Voltage |
-|--------|---------|
-| VOL+   | 0.38 V  |
-| VOL-   | 0.82 V  |
-| PLAY   | 1.34 V  |
-| SET    | 1.87 V  |
-| none   | 3.30 V  |
+| Button | Voltage | Expected raw ADC code |
+|--------|---------|-----------------------|
+| VOL+   | 0.38 V  | ~1780                 |
+| VOL-   | 0.82 V  | ~1300                 |
+| PLAY   | 1.34 V  | ~725                  |
+| SET    | 1.87 V  | ~145                  |
+| none   | 3.30 V  | 0 (clipped)           |
+
+The ESP32-S31 ADC is differential and its scale runs **backwards**. A grounded input
+reads about 2198, higher voltages give lower codes at about 0.91 mV per code, and
+everything from about 2 V upwards reads 0. So `mV = 2000 - raw * 4000 / 4393`. The
+idle 3.3 V is outside the range and reads 0, while all four buttons are below 2 V.
+esp-hal has no S31 ADC calibration yet. The conversion comes from
+[esp-touch-paint](https://github.com/playfulFence/esp-touch-paint).
 
 The demo works like this:
 
-1. At start-up it samples the idle level and prints the ADC calibration. Keep the
-   buttons released while it starts.
+1. At start-up it prints one idle reading, which should be raw 0, about 2000 mV.
 2. It polls every 10 ms and accepts a button once three readings in a row agree.
 3. For each press it prints the button, a per-button counter, the raw ADC code and the
    estimated voltage.
 4. For each release it prints how long the button was held and the counts for all
    buttons.
 
-Expected output once the ADC works:
+Expected output (the raw and millivolt values vary a little from board to board):
 
 ```
 INFO - === Demo 01: buttons (ADC ladder on GPIO42) ===
-INFO - ADC calibration: zero=2198 idle=4393 full_scale=4393
+INFO - Idle: raw 0 (~2000 mV; 3.3 V idle clips at ~2000 mV)
 INFO - Press PLAY, SET, VOL- or VOL+.
-INFO - PLAY pressed  #1   (raw 3090, ~1340 mV)
+INFO - PLAY pressed  #1   (raw 727, ~1339 mV)
 INFO - PLAY released after 182 ms
 INFO - counts: PLAY=1 SET=0 VOL-=0 VOL+=0
 ```
-
-The raw and millivolt values above are illustrative. The S31 ADC is not calibrated in
-esp-hal yet, so the voltage is estimated by scaling linearly between the grounded-input
-code (2198) and the idle level.
 
 The Reset and Boot buttons are not part of the ladder. Reset restarts the chip. Boot
 (GPIO61) is a strapping pin used to enter download mode.
@@ -156,8 +158,7 @@ It runs four effects:
 | color test | Red, green, blue, white and off, one second each. If these don't match the log, the colour order is wrong |
 | candle | Warm orange flicker |
 
-The ladder buttons can't be read yet (see demo 01), so the **BOOT** button controls
-the demo instead:
+The **BOOT** button (a plain digital input) controls the demo:
 
 - **Short press:** next effect. The first press also turns off auto-advance.
 - **Long press (1 s or more):** next brightness level (8, 32, 96, 255; the default is 32).
