@@ -1,0 +1,33 @@
+[package]
+name         = "esp32-s31-korvo-examples"
+description  = "Demos for the ESP32-S31-Korvo-1, built on the esp32-s31-korvo library"
+edition.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+repository.workspace   = true
+publish      = false
+
+[dependencies]
+esp32-s31-korvo        = { workspace = true }
+esp-hal                = { workspace = true }
+esp-rtos               = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true }
+log                    = { workspace = true }
+embassy-net            = { workspace = true }
+embedded-io            = { workspace = true }
+embedded-io-async      = { workspace = true }
+esp-alloc              = { workspace = true }
+esp-backtrace          = { workspace = true }
+esp-println            = { workspace = true }
+embassy-executor       = { workspace = true }
+embassy-time           = { workspace = true }
+esp-radio              = { workspace = true }
+smoltcp                = { workspace = true }
+critical-section       = { workspace = true }
+static_cell            = { workspace = true }
+esp-hal-smartled       = { workspace = true }
+smart-leds             = { workspace = true }
+embassy-sync           = { workspace = true }
+embassy-futures        = { workspace = true }
+libmudtelnet-rs        = { workspace = true }
+embedded-graphics      = { workspace = true }

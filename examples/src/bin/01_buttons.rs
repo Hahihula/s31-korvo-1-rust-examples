@@ -16,11 +16,11 @@
 use embassy_executor::Spawner;
 use esp_backtrace as _;
 use esp_hal::timer::timg::TimerGroup;
-use log::info;
-use s31_rust_examples::{
+use esp32_s31_korvo::{
     board,
     buttons::{Button, Buttons, Event},
 };
+use log::info;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

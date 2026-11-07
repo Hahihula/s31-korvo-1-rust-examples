@@ -25,8 +25,8 @@ use esp_hal::{
     psram::Psram,
     timer::timg::TimerGroup,
 };
+use esp32_s31_korvo::board::{self, i2c_addr};
 use log::{info, warn};
-use s31_rust_examples::board::{self, i2c_addr};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

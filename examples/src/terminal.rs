@@ -24,7 +24,7 @@ use embedded_graphics::{
 };
 use static_cell::ConstStaticCell;
 
-use crate::display::Canvas;
+use esp32_s31_korvo::display::Canvas;
 
 pub const COLS: usize = 80;
 pub const ROWS: usize = 24;

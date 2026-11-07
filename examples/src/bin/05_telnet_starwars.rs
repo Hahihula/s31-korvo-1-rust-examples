@@ -25,9 +25,10 @@ use embedded_io_async::Write;
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_println::Printer;
+use esp32_s31_korvo::board;
+use esp32_s31_korvo_examples::net;
 use libmudtelnet_rs::{Parser, events::TelnetEvents};
 use log::{error, info, warn};
-use s31_rust_examples::{board, net};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

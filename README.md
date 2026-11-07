@@ -17,14 +17,14 @@ development board (ESP32-S31-WROOM-3, 16 MB flash, 16 MB PSRAM), built on
 - One USB-C cable into the **UART** port of the board, with the power switch set to ON.
 
 The ESP32-S31 support in the released esp-rs crates is incomplete; for example, the Wi-Fi
-connect hangs in esp-radio 1.0.0-beta.1. So `Cargo.toml` pins esp-hal, esp-rtos,
+connect hangs in esp-radio 1.0.0-beta.1. So the root `Cargo.toml` pins esp-hal, esp-rtos,
 esp-radio, esp-alloc, esp-println, esp-backtrace and esp-bootloader-esp-idf to a single
 esp-hal `main` commit with `[patch.crates-io]`. The first build downloads that commit from
 GitHub.
 
 ## Running a demo
 
-Every demo is its own binary in `src/bin/`. Build in release mode, which the PSRAM
+Every demo is its own binary in `examples/src/bin/`. Build in release mode, which the PSRAM
 driver requires:
 
 ```bash
@@ -42,14 +42,38 @@ Log verbosity follows `ESP_LOG` (default `info`), for example
 
 ## Project layout
 
+The repository is a Cargo workspace with two crates:
+
+- **`esp32-s31-korvo`**: the board library. Pin map, PSRAM, LCD, buttons, RGB LED and
+  the ES8389 microphones. Use it in your own firmware (see below).
+- **`esp32-s31-korvo-examples`** (`examples/`): the demos, plus the app-level helpers
+  (Wi-Fi, telnet terminal) that only the demos need, so a firmware using the board
+  doesn't pull in the network stack.
+
 | Path | Contents |
 |------|----------|
-| `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus, RGB LED setup and PSRAM mapping (`psram_reserve`, `psram_split`) |
-| `src/buttons.rs` | Debounced decoder for the four ADC-ladder buttons, plus the BOOT button (GPIO61) |
-| `src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
-| `src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator and an incremental renderer for the LCD |
-| `src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
-| `src/bin/NN_*.rs` | The demos |
+| `esp32-s31-korvo/src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus, RGB LED setup and PSRAM mapping (`psram_reserve`, `psram_split`) |
+| `esp32-s31-korvo/src/buttons.rs` | Debounced decoder for the four ADC-ladder buttons, plus the BOOT button (GPIO61) |
+| `esp32-s31-korvo/src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
+| `esp32-s31-korvo/src/es8389.rs` | ES8389 codec driver (recording side, both ADC channels as microphones), ported from Espressif's `esp_codec_dev` |
+| `esp32-s31-korvo/src/audio.rs` | I2S input stream from the ES8389 (16-bit stereo Philips, DMA ring buffer) |
+| `examples/src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator and an incremental renderer for the LCD |
+| `examples/src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
+| `examples/src/bin/NN_*.rs` | The demos |
+
+## Using `esp32-s31-korvo` in your own firmware
+
+The library isn't on crates.io; depend on it by git tag:
+
+```toml
+[dependencies]
+esp32-s31-korvo = { git = "https://github.com/Hahihula/s31-korvo-1-rust-examples", tag = "v0.1.0" }
+```
+
+Copy the `[patch.crates-io]` section from the root `Cargo.toml` too (the library needs
+the same esp-hal commit), plus `.cargo/config.toml`, `rust-toolchain.toml` and the demos'
+`build.rs` (linker scripts). Cargo pins the exact tag, so moving to a newer release means
+changing the tag.
 
 ## Demos
 
@@ -384,7 +408,7 @@ the Wi-Fi credentials from demo 04 (`.cargo/wifi.toml`, or the `WIFI_SSID` and
 How it works:
 
 - **Telnet task:** connects to `towel.blinkenlights.nl:23` and runs the stream through
-  `libmudtelnet-rs`. The text goes into an 80×24 terminal emulator (`src/terminal.rs`).
+  `libmudtelnet-rs`. The text goes into an 80×24 terminal emulator (`examples/src/terminal.rs`).
   The emulator understands cursor positioning, the erase-screen and erase-line codes,
   cursor moves, CR/LF, backspace and tab. It ignores colour codes and anything it does
   not know.

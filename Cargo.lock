@@ -1107,6 +1107,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-s31-korvo"
+version = "0.1.0"
+dependencies = [
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-async",
+ "esp-alloc",
+ "esp-hal",
+ "esp-hal-smartled",
+ "esp-println",
+ "log",
+ "smart-leds",
+ "static_cell",
+]
+
+[[package]]
+name = "esp32-s31-korvo-examples"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "esp-alloc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-hal-smartled",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp32-s31-korvo",
+ "libmudtelnet-rs",
+ "log",
+ "smart-leds",
+ "smoltcp 0.14.0",
+ "static_cell",
+]
+
+[[package]]
 name = "esp32c2"
 version = "0.31.0"
 source = "git+https://github.com/esp-rs/esp-pacs.git?rev=5cb8c50#5cb8c50df887fb2653953dbc03a5f05dc07f11d3"
@@ -1743,34 +1788,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "s31-rust-examples"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "embedded-io 0.7.1",
- "embedded-io-async 0.7.0",
- "esp-alloc",
- "esp-backtrace",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-hal-smartled",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "libmudtelnet-rs",
- "log",
- "smart-leds",
- "smoltcp 0.14.0",
- "static_cell",
-]
 
 [[package]]
 name = "scoped-tls"

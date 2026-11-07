@@ -22,11 +22,9 @@ use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{WifiController, scan::ScanConfig};
+use esp32_s31_korvo::board;
+use esp32_s31_korvo_examples::net::{self, DateTime};
 use log::{error, info, warn};
-use s31_rust_examples::{
-    board,
-    net::{self, DateTime},
-};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

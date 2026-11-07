@@ -27,14 +27,17 @@ use embedded_graphics::{pixelcolor::Rgb565, prelude::RgbColor};
 use embedded_io_async::Write;
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
-use libmudtelnet_rs::{Parser, events::TelnetEvents};
-use log::{error, info, warn};
-use s31_rust_examples::{
+use esp32_s31_korvo::{
     board,
     display::{self, Display},
-    lcd_pins, net,
+    lcd_pins,
+};
+use esp32_s31_korvo_examples::{
+    net,
     terminal::{Grid, Terminal, TerminalView},
 };
+use libmudtelnet_rs::{Parser, events::TelnetEvents};
+use log::{error, info, warn};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

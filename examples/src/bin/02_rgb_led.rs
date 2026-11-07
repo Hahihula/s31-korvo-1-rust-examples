@@ -19,8 +19,8 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channe
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{peripherals::GPIO61, timer::timg::TimerGroup};
+use esp32_s31_korvo::{board, buttons::BootButton};
 use log::{info, warn};
-use s31_rust_examples::{board, buttons::BootButton};
 use smart_leds::{
     RGB8, SmartLedsWriteAsync, brightness, gamma,
     hsv::{Hsv, hsv2rgb},

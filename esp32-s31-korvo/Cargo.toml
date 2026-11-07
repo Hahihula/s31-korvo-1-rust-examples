@@ -1,0 +1,19 @@
+[package]
+name         = "esp32-s31-korvo"
+description  = "Board support for the ESP32-S31-Korvo-1 V1.1: pins, PSRAM, 800x480 RGB LCD, buttons, RGB LED, ES8389 microphones over I2S"
+edition.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+esp-hal            = { workspace = true }
+esp-alloc          = { workspace = true }
+esp-println        = { workspace = true }
+esp-hal-smartled   = { workspace = true }
+smart-leds         = { workspace = true }
+embassy-time       = { workspace = true }
+embedded-graphics  = { workspace = true }
+embedded-hal-async = { workspace = true }
+log                = { workspace = true }
+static_cell        = { workspace = true }
