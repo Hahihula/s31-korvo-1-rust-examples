@@ -26,13 +26,12 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 use esp_backtrace as _;
-use esp_hal::timer::timg::TimerGroup;
-use log::{error, info};
-use s31_rust_examples::{
+use esp32_s31_korvo::{
     board,
     display::{self, Canvas, Display, HEIGHT, WIDTH},
     lcd_pins,
 };
+use log::{error, info};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -46,6 +45,9 @@ const BAR_COLORS: [Rgb565; 8] = [
     Rgb565::BLUE,
     Rgb565::BLACK,
 ];
+/// Colours of the bouncing square: the bar colours without black, which would
+/// vanish on the dark background.
+const SQUARE_COLORS: &[Rgb565] = BAR_COLORS.split_last().unwrap().1;
 const BACKGROUND: Rgb565 = Rgb565::new(2, 4, 6);
 /// Area the square bounces in (below the static pattern).
 const ARENA: Rectangle = Rectangle::new(Point::new(8, 300), Size::new(784, 172));
@@ -57,12 +59,8 @@ const SQUARE: u32 = 40;
 )]
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) -> ! {
-    let peripherals = board::init();
+    esp32_s31_korvo_examples::start!(peripherals, "Demo 08: RGB LCD 800x480");
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== Demo 08: RGB LCD 800x480 ===");
     let framebuffer = board::psram_split(peripherals.PSRAM, display::FRAME_BYTES);
     let mut display = match Display::new(
         peripherals.LCD_CAM,
@@ -105,7 +103,7 @@ async fn main(_spawner: Spawner) -> ! {
             velocity.y = -velocity.y;
             pos.y = pos.y.clamp(ARENA.top_left.y, max.y);
         }
-        let hue = BAR_COLORS[(total_frames / 30) as usize % 7];
+        let hue = SQUARE_COLORS[(total_frames / 30) as usize % SQUARE_COLORS.len()];
         let _ = Rectangle::new(pos, Size::new(SQUARE, SQUARE))
             .into_styled(PrimitiveStyle::with_fill(hue))
             .draw(&mut canvas);

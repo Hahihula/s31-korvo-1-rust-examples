@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  # Weekly, so a pinned esp-hal commit that disappears upstream shows up
+  # even when nothing here changes.
+  schedule:
+    - cron: "0 6 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Unit tests of the hardware-independent modules, on the host target
+  # (the workspace default is the ESP32-S31).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p esp32-s31-korvo -p esp32-s31-korvo-examples --lib --target x86_64-unknown-linux-gnu
+
+  # Formatting, lints and a release build of the library and every demo for
+  # the chip (stable Rust, rust-toolchain.toml adds the target).
+  esp32s31:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv32imafc-unknown-none-elf
+          components: rustfmt, clippy, rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --release --lib --bins -- -D warnings
+      - run: cargo clippy -p esp32-s31-korvo --release -- -D warnings   # without the `log` feature
+      - run: cargo build --workspace --release --bins

@@ -16,18 +16,16 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-extern crate alloc;
-
 use embassy_executor::Spawner;
 use embassy_net::{Stack, dns::DnsQueryType, tcp::TcpSocket};
 use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::Write;
 use esp_backtrace as _;
-use esp_hal::{rng::Rng, timer::timg::TimerGroup};
+use esp_hal::rng::Rng;
 use esp_println::Printer;
+use esp32_s31_korvo_examples::net;
 use libmudtelnet_rs::{Parser, events::TelnetEvents};
 use log::{error, info, warn};
-use s31_rust_examples::{board, net};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -43,14 +41,13 @@ const RETRY_DELAY: Duration = Duration::from_secs(10);
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let peripherals = board::init();
     // The Wi-Fi driver needs about 60 KiB of internal RAM.
-    esp_alloc::heap_allocator!(size: 96 * 1024);
+    esp32_s31_korvo_examples::start!(
+        peripherals,
+        format_args!("Demo 05: Star Wars over telnet ({HOST}:{PORT})"),
+        heap = 96 * 1024
+    );
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== Demo 05: Star Wars over telnet ({HOST}:{PORT}) ===");
     let Some((ssid, password)) = net::credentials() else {
         error!("WIFI_SSID was not set at build time; see .cargo/wifi.toml.example");
         loop {

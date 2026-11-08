@@ -17,14 +17,14 @@ development board (ESP32-S31-WROOM-3, 16 MB flash, 16 MB PSRAM), built on
 - One USB-C cable into the **UART** port of the board, with the power switch set to ON.
 
 The ESP32-S31 support in the released esp-rs crates is incomplete; for example, the Wi-Fi
-connect hangs in esp-radio 1.0.0-beta.1. So `Cargo.toml` pins esp-hal, esp-rtos,
+connect hangs in esp-radio 1.0.0-beta.1. So the root `Cargo.toml` pins esp-hal, esp-rtos,
 esp-radio, esp-alloc, esp-println, esp-backtrace and esp-bootloader-esp-idf to a single
 esp-hal `main` commit with `[patch.crates-io]`. The first build downloads that commit from
 GitHub.
 
 ## Running a demo
 
-Every demo is its own binary in `src/bin/`. Build in release mode, which the PSRAM
+Every demo is its own binary in `examples/src/bin/`. Build in release mode, which the PSRAM
 driver requires:
 
 ```bash
@@ -42,14 +42,87 @@ Log verbosity follows `ESP_LOG` (default `info`), for example
 
 ## Project layout
 
+The repository is a Cargo workspace with two crates:
+
+- **`esp32-s31-korvo`**: the board library. Pin map, PSRAM, LCD, buttons, RGB LED and
+  the ES8389 microphones. Use it in your own firmware (see below).
+- **`esp32-s31-korvo-examples`** (`examples/`): the demos, plus the app-level helpers
+  (start-up, Wi-Fi, SNTP, telnet terminal) that only the demos need, so a firmware
+  using the board doesn't pull in the network stack.
+
+In both, the hardware-independent modules (button ladder decoding, gain steps, the
+terminal parser, SNTP packets, dates) touch no peripheral and read no clock. They also
+build for a PC, where they are unit-tested; everything else builds only for the
+ESP32-S31.
+
 | Path | Contents |
 |------|----------|
-| `src/board.rs` | Board pin map, I2C device addresses, common `init()`, shared I2C bus, RGB LED setup and PSRAM mapping (`psram_reserve`, `psram_split`) |
-| `src/buttons.rs` | Debounced decoder for the four ADC-ladder buttons, plus the BOOT button (GPIO61) |
-| `src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
-| `src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator and an incremental renderer for the LCD |
-| `src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client and UTC date formatting |
-| `src/bin/NN_*.rs` | The demos |
+| `esp32-s31-korvo/src/lib.rs` | Crate docs: what a firmware using the library needs |
+| `esp32-s31-korvo/src/board.rs` | Board pin map, I2C device addresses, `init()`, logger, shared I2C bus, RGB LED setup and PSRAM mapping (`psram_reserve`, `psram_split`) |
+| `esp32-s31-korvo/src/buttons.rs` | The four ADC-ladder buttons (polling, debouncing) and the BOOT button (GPIO61) |
+| `esp32-s31-korvo/src/ladder.rs` | Ladder decoding: ADC code to voltage to button, debouncer (host-tested) |
+| `esp32-s31-korvo/src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
+| `esp32-s31-korvo/src/es8389.rs` | ES8389 codec driver (recording side, both ADC channels as microphones), ported from Espressif's `esp_codec_dev` |
+| `esp32-s31-korvo/src/gain.rs` | ES8389 microphone gain steps, 0 to 36.5 dB (host-tested) |
+| `esp32-s31-korvo/src/audio.rs` | I2S input stream from the ES8389 (16-bit stereo Philips, DMA ring buffer, restarts after an overflow) |
+| `examples/src/lib.rs`, `demo.rs` | Helper crate root; the `start!` macro the demos begin with |
+| `examples/src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator (parser host-tested) and an incremental renderer for the LCD |
+| `examples/src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client |
+| `examples/src/sntp.rs`, `time.rs` | SNTP request and reply checks; UTC dates from Unix time (host-tested) |
+| `examples/build.rs` | Linker script (`linkall.x`) and hints for common link errors |
+| `examples/src/bin/NN_*.rs` | The demos |
+
+## Using `esp32-s31-korvo` in your own firmware
+
+The library isn't on crates.io; depend on it by git tag (or by `rev` until a tag
+exists):
+
+```toml
+[dependencies]
+esp32-s31-korvo = { git = "https://github.com/Hahihula/s31-korvo-1-rust-examples", tag = "v0.1.0", features = ["log"] }
+```
+
+```rust
+let p = esp32_s31_korvo::board::init();       // HAL at 320 MHz
+esp32_s31_korvo::board::init_logger();        // `log` feature: esp-println on UART0
+esp_alloc::heap_allocator!(size: 96 * 1024);  // your heap; plain RAM (see board::init)
+let display = Display::new(p.LCD_CAM, p.DMA_AXI_CH0, esp32_s31_korvo::lcd_pins!(p), fb)?;
+```
+
+What the firmware has to bring itself:
+
+- **The esp-hal pins.** Copy the `[patch.crates-io]` section from the root `Cargo.toml`.
+  Cargo applies `[patch]` only in the root manifest, so it can't travel with the
+  library; without it you get the released esp-hal, whose ESP32-S31 support is
+  incomplete. The pins are commits on esp-hal's `main` branch: if one disappears
+  upstream, builds fail with "failed to find commit", and the weekly CI run here shows
+  it. `libmudtelnet-rs` (demos only) points at a fork until a no_std fix is released.
+- **The linker script.** A `build.rs` in the binary crate with
+  `println!("cargo:rustc-link-arg=-Tlinkall.x");`; a dependency can't pass it.
+- Copy `.cargo/config.toml` and `rust-toolchain.toml` as well.
+- **The logger and the heap**: `board::init()` sets up neither. The `log` feature (off
+  by default) adds `board::init_logger()` and with it `esp-println`.
+- **Sharing the I2C bus.** Drivers take the bus by value or by `&mut`
+  (`Es8389::new(&mut i2c)`), so the codec, camera and touch controller can share it.
+
+Cargo pins the exact tag, so moving to a newer release means changing the tag.
+
+## Tests and CI
+
+The hardware-independent modules have unit tests that run on a PC. The workspace builds
+for the ESP32-S31 by default, so give the host target:
+
+```bash
+cargo test -p esp32-s31-korvo -p esp32-s31-korvo-examples --lib --target aarch64-apple-darwin
+```
+
+(`x86_64-unknown-linux-gnu` and so on for other hosts.) Modules that need the chip are
+behind `#[cfg(target_arch = "riscv32")]`, and their dependencies are listed under
+`[target.'cfg(target_arch = "riscv32")'.dependencies]`.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the tests, `cargo fmt --check`, clippy
+on the library and all demos with warnings as errors, and a release build of every
+demo, on every push and pull request and once a week (to catch a vanished esp-hal pin).
 
 ## Demos
 
@@ -186,6 +259,36 @@ INFO - effect: rainbow
 INFO - brightness 96
 ```
 
+### 03 – Microphones
+
+```bash
+cargo run --release --bin 03_microphones
+```
+
+Starts the I2S clocks (the S31 is master, 16-bit stereo Philips at 16 kHz, no MCLK),
+reads the ES8389's chip ID (`83 89`), configures it and prints the level of both
+microphones twice a second. VOL+ and VOL- change the microphone gain in 3 dB steps
+(0 to 36.5 dB, starting at 33.5 dB).
+
+The codec runs as Espressif's Korvo-1 BSP sets it up, except that both ADC channels
+are microphones (no DAC echo reference), so BCLK is 32 × fs. If the I2S ring overflows,
+`AudioIn` restarts the stream and the demo logs the gap.
+
+The first report includes the codec powering up (a full-scale click); after that,
+a quiet room reads about -72 dBFS and speech at arm's length -20 to -35 dBFS:
+
+```
+INFO - ES8389 chip ID 83 89
+INFO - ES8389 running, mic gain 33.5 dB
+INFO - VOL+ / VOL- = mic gain
+INFO - MIC1  -13.6 dBFS (peak    0.0)  MIC2  -13.4 dBFS (peak    0.0)
+INFO - MIC1  -72.1 dBFS (peak  -59.7)  MIC2  -71.1 dBFS (peak  -58.9)
+INFO - MIC1  -35.6 dBFS (peak  -17.1)  MIC2  -35.3 dBFS (peak  -17.9)
+INFO - MIC1  -19.4 dBFS (peak   -9.0)  MIC2  -19.1 dBFS (peak   -8.7)
+INFO - mic gain 36.5 dB
+INFO - mic gain 33.5 dB
+```
+
 ### 04 – Wi-Fi, DHCP, DNS and NTP
 
 ```bash
@@ -214,7 +317,9 @@ What the demo does:
    gets no answer from the driver within 30 s is cancelled and retried.
 3. Gets an IP address, gateway and DNS server over DHCP (embassy-net).
 4. Looks up `towel.blinkenlights.nl` in DNS, the host demo 05 will connect to.
-5. Fetches the time from `pool.ntp.org` with a minimal SNTP request over UDP.
+5. Fetches the time from `pool.ntp.org` with a minimal SNTP request over UDP. Only
+   a reply from the server's address that echoes the request's random timestamp and
+   comes from a synchronised server (stratum 1-15) is accepted.
 6. Every 10 seconds prints the current UTC time (NTP time plus the time elapsed since)
    and the IP address. If NTP failed, it is retried each round instead.
 
@@ -384,7 +489,7 @@ the Wi-Fi credentials from demo 04 (`.cargo/wifi.toml`, or the `WIFI_SSID` and
 How it works:
 
 - **Telnet task:** connects to `towel.blinkenlights.nl:23` and runs the stream through
-  `libmudtelnet-rs`. The text goes into an 80×24 terminal emulator (`src/terminal.rs`).
+  `libmudtelnet-rs`. The text goes into an 80×24 terminal emulator (`examples/src/terminal.rs`).
   The emulator understands cursor positioning, the erase-screen and erase-line codes,
   cursor moves, CR/LF, backspace and tab. It ignores colour codes and anything it does
   not know.
@@ -424,3 +529,15 @@ INFO - display: 35 fps, 0 resyncs so far
 If PSRAM falls behind (most likely while Wi-Fi is busy), the console shows
 `display: stream drifted ..., resync #N` and the panel blinks once instead of staying
 shifted.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.
+
+The ES8389 driver (`esp32-s31-korvo/src/es8389.rs`) is ported from Espressif's
+`esp_codec_dev` (Apache-2.0), as noted in the file.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual
+licensed as above, without any additional terms or conditions.

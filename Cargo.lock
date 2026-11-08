@@ -457,7 +457,7 @@ dependencies = [
  "heapless 0.9.3",
  "log",
  "managed",
- "smoltcp 0.13.1",
+ "smoltcp",
 ]
 
 [[package]]
@@ -1107,6 +1107,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-s31-korvo"
+version = "0.1.0"
+dependencies = [
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal-async",
+ "esp-alloc",
+ "esp-hal",
+ "esp-hal-smartled",
+ "esp-println",
+ "log",
+ "smart-leds",
+ "static_cell",
+]
+
+[[package]]
+name = "esp32-s31-korvo-examples"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-io-async 0.7.0",
+ "esp-alloc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-hal-smartled",
+ "esp-println",
+ "esp-radio",
+ "esp-rtos",
+ "esp32-s31-korvo",
+ "libm",
+ "libmudtelnet-rs",
+ "log",
+ "smart-leds",
+ "static_cell",
+]
+
+[[package]]
 name = "esp32c2"
 version = "0.31.0"
 source = "git+https://github.com/esp-rs/esp-pacs.git?rev=5cb8c50#5cb8c50df887fb2653953dbc03a5f05dc07f11d3"
@@ -1430,6 +1473,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "libmudtelnet-rs"
 version = "2.0.10"
 source = "git+https://github.com/Hahihula/libmudtelnet-rs?rev=192001c81a587d1d4d8638879ad41e532709f821#192001c81a587d1d4d8638879ad41e532709f821"
@@ -1745,34 +1794,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "s31-rust-examples"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-graphics",
- "embedded-io 0.7.1",
- "embedded-io-async 0.7.0",
- "esp-alloc",
- "esp-backtrace",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-hal-smartled",
- "esp-println",
- "esp-radio",
- "esp-rtos",
- "libmudtelnet-rs",
- "log",
- "smart-leds",
- "smoltcp 0.14.0",
- "static_cell",
-]
-
-[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1893,20 +1914,6 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "heapless 0.9.3",
- "managed",
-]
-
-[[package]]
-name = "smoltcp"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6f8b28ad56c6e35524a37dd492af5d1a47e31e1a4d175cd12f89c075f01980f"
-dependencies = [
- "bitflags",
- "byteorder",
- "cfg-if",
- "heapless 0.9.3",
- "log",
  "managed",
 ]
 

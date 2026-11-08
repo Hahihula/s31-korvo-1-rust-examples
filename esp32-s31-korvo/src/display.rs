@@ -57,7 +57,9 @@ use esp_hal::{
 };
 use static_cell::ConstStaticCell;
 
+/// Panel width in pixels.
 pub const WIDTH: usize = 800;
+/// Panel height in pixels.
 pub const HEIGHT: usize = 480;
 /// Size of one RGB565 frame in bytes.
 pub const FRAME_BYTES: usize = WIDTH * HEIGHT * 2;
@@ -95,11 +97,17 @@ const fn chunk(i: usize) -> (usize, usize) {
 
 /// The LCD connector pins (DB0-4 blue, DB5-10 green, DB11-15 red).
 pub struct LcdPins<'d> {
+    /// Vertical sync, GPIO45.
     pub vsync: GPIO45<'d>,
+    /// Horizontal sync, GPIO44.
     pub hsync: GPIO44<'d>,
+    /// Data enable, GPIO43.
     pub de: GPIO43<'d>,
+    /// Pixel clock, GPIO40.
     pub pclk: GPIO40<'d>,
+    /// Blue, DB0-4 (GPIO8-12).
     pub b: (GPIO8<'d>, GPIO9<'d>, GPIO10<'d>, GPIO11<'d>, GPIO12<'d>),
+    /// Green, DB5-10 (GPIO13-18).
     pub g: (
         GPIO13<'d>,
         GPIO14<'d>,
@@ -108,13 +116,17 @@ pub struct LcdPins<'d> {
         GPIO17<'d>,
         GPIO18<'d>,
     ),
+    /// Red, DB11-15 (GPIO19, 33-36).
     pub r: (GPIO19<'d>, GPIO33<'d>, GPIO34<'d>, GPIO35<'d>, GPIO36<'d>),
 }
 
-/// Builds [`LcdPins`] from the HAL peripherals struct.
+/// [`LcdPins`] taken out of a `Peripherals` variable:
+/// `Display::new(p.LCD_CAM, p.DMA_AXI_CH0, lcd_pins!(p), framebuffer)`.
+/// Takes the variable's name (not an expression), so it moves the twenty
+/// GPIOs out of one struct and leaves the rest usable.
 #[macro_export]
 macro_rules! lcd_pins {
-    ($p:expr) => {
+    ($p:ident) => {
         $crate::display::LcdPins {
             vsync: $p.GPIO45,
             hsync: $p.GPIO44,
@@ -161,7 +173,9 @@ pub fn panel_config() -> Config {
         .with_disable_black_region(false)
 }
 
+/// Errors from [`Display::new`].
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DisplayError {
     /// The frame buffer is too small or not aligned for DMA.
     Buffer,
@@ -170,6 +184,18 @@ pub enum DisplayError {
     /// The DMA transfer could not be started.
     Dma(DmaError),
 }
+
+impl core::fmt::Display for DisplayError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DisplayError::Buffer => f.write_str("frame buffer too small or not 64-byte aligned"),
+            DisplayError::Config(e) => write!(f, "DPI configuration rejected: {e:?}"),
+            DisplayError::Dma(e) => write!(f, "DMA transfer failed to start: {e:?}"),
+        }
+    }
+}
+
+impl core::error::Error for DisplayError {}
 
 /// Writes CPU cache lines covering `bytes` back to memory so the DMA sees them.
 fn writeback(bytes: &[u8]) {
@@ -229,6 +255,8 @@ enum Scanout<'d> {
     Switching,
 }
 
+/// The LCD, refreshed continuously from a frame buffer in PSRAM (see the
+/// module docs).
 pub struct Display<'d> {
     scanout: Scanout<'d>,
     /// Address of the first ring descriptor, to locate the DMA in the ring.

@@ -1,4 +1,14 @@
+//! Linker setup for the demos: `linkall.x`, and hints for common link errors.
+
 fn main() {
+    // Host builds (unit tests of the hardware-independent modules) need none
+    // of the ESP linker setup below.
+    if !std::env::var("TARGET")
+        .unwrap_or_default()
+        .starts_with("riscv32")
+    {
+        return;
+    }
     linker_be_nice();
     // make sure linkall.x is the last linker script (otherwise might cause problems with flip-link)
     println!("cargo:rustc-link-arg=-Tlinkall.x");
@@ -6,7 +16,8 @@ fn main() {
 
 fn linker_be_nice() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
+    // Called by the linker as `<script> <kind> <symbol>`.
+    if args.len() > 2 {
         let kind = &args[1];
         let what = &args[2];
 

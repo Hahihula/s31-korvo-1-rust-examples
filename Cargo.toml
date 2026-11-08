@@ -1,79 +1,50 @@
-[package]
+[workspace]
+resolver = "2"
+members  = ["esp32-s31-korvo", "examples"]
+
+[workspace.package]
 edition      = "2024"
-name         = "s31-rust-examples"
 rust-version = "1.95"
 version      = "0.1.0"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/Hahihula/s31-korvo-1-rust-examples"
 
-[dependencies]
+# Lints for the library crates (`[lints] workspace = true`).
+[workspace.lints.rust]
+missing_docs           = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+rust_2018_idioms       = { level = "warn", priority = -1 }
+
+# One version of each dependency for the library and the demos.
+[workspace.dependencies]
+esp32-s31-korvo = { path = "esp32-s31-korvo" }
+
 esp-hal = { version = "1.2", features = ["esp32s31", "log-04", "unstable"] }
-
-esp-rtos = { version = "0.4.0", features = [
-  "embassy",
-  "esp-alloc",
-  "esp-radio",
-  "esp32s31",
-  "log-04",
-] }
-
-esp-bootloader-esp-idf = { version = "0.6.0", features = [
-  "esp32s31",
-  "log-04",
-] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "esp32s31", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s31", "log-04"] }
 log = "0.4.27"
-
-embassy-net = { version = "0.9.1", features = [
-  "dhcpv4",
-  "dns",
-  "log",
-  "medium-ethernet",
-  "tcp",
-  "udp",
-] }
-embedded-io = "0.7.1"
+embassy-net = { version = "0.9.1", features = ["dhcpv4", "dns", "log", "medium-ethernet", "tcp", "udp"] }
 embedded-io-async = "0.7.0"
 esp-alloc = { version = "0.11.0", features = ["esp32s31"] }
-esp-backtrace = { version = "0.20.0", features = [
-  "esp32s31",
-  "panic-handler",
-  "println",
-] }
+esp-backtrace = { version = "0.20.0", features = ["esp32s31", "panic-handler", "println"] }
 esp-println = { version = "0.18.0", features = ["esp32s31", "log-04"] }
 # for more networking protocol support see https://crates.io/crates/edge-net
 embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-time = { version = "0.5.0", features = ["log"] }
-esp-radio = { version = "1.0.0-beta.2", features = [
-  "esp-alloc",
-  "esp32s31",
-  "log-04",
-  "unstable",
-  "wifi",
-] }
-smoltcp = { version = "0.14.0", default-features = false, features = [
-  "log",
-  "medium-ethernet",
-  "multicast",
-  "proto-dhcpv4",
-  "proto-dns",
-  "proto-ipv4",
-  "socket-dns",
-  "socket-icmp",
-  "socket-raw",
-  "socket-tcp",
-  "socket-udp",
-] }
-
-critical-section = "1.2.0"
-static_cell      = "2.1.1"
+esp-radio = { version = "1.0.0-beta.2", features = ["esp-alloc", "esp32s31", "log-04", "unstable", "wifi"] }
+static_cell = "2.1.1"
 esp-hal-smartled = { version = "0.18", features = ["esp32s31"] }
 smart-leds = "0.4"
 embassy-sync = "0.8"
 embassy-futures = "0.1"
+embedded-hal-async = "1.0"
 libmudtelnet-rs = { version = "2.0.10", default-features = false }
 embedded-graphics = "0.8"
-
+libm = "0.2"
 
 # The ESP32-S31 support in the released crates is incomplete (Wi-Fi connect
 # hangs), so the whole esp-rs stack is pinned to one esp-hal `main` commit.
+# A firmware using esp32-s31-korvo needs the same pins in its own manifest.
 [patch.crates-io]
 esp-hal                = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6" }
 esp-rtos               = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6" }

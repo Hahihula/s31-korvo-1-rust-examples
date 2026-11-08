@@ -1,0 +1,37 @@
+[package]
+name         = "esp32-s31-korvo"
+description  = "Board support for the ESP32-S31-Korvo-1 V1.1: pins, PSRAM, 800x480 RGB LCD, buttons, RGB LED, ES8389 microphones over I2S"
+edition.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+readme       = "../README.md"
+keywords     = ["esp32", "esp32s31", "embedded", "no-std", "board-support"]
+categories   = ["embedded", "no-std", "hardware-support"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# `board::init_logger()`: log through esp-println on UART0. Off by default so
+# a firmware picks its own console and logger.
+log = ["dep:esp-println"]
+
+# Always built: the hardware-independent modules (ladder, gain), which are
+# unit-tested on a PC: `cargo test -p esp32-s31-korvo --target <host>`.
+[dependencies]
+embassy-time       = { workspace = true }
+
+# The drivers, only for the ESP32-S31.
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+esp-hal            = { workspace = true }
+esp-alloc          = { workspace = true }
+esp-println        = { workspace = true, optional = true }
+esp-hal-smartled   = { workspace = true }
+smart-leds         = { workspace = true }
+embedded-graphics  = { workspace = true }
+embedded-hal-async = { workspace = true }
+log                = { workspace = true }
+static_cell        = { workspace = true }
