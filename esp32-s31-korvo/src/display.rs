@@ -2,8 +2,8 @@
 //! LCD_CAM DPI interface.
 //!
 //! The frame buffer lives in PSRAM. Its DMA descriptors form a ring and the
-//! LCD runs with `next_frame_en`, so the panel is refreshed continuously at a
-//! constant ~35 Hz without any CPU involvement. Drawing goes straight into the
+//! LCD runs with `next_frame_en`, so the panel is refreshed continuously
+//! (~35 Hz at the default pixel clock) without any CPU involvement. Drawing goes straight into the
 //! buffer while it is being scanned out; [`Display::present`] writes the
 //! touched rows back from the CPU cache and waits for the next VSYNC.
 //!
@@ -74,7 +74,8 @@ const BURST: BurstConfig = BurstConfig {
 };
 /// Drift warnings are summarised at most this often.
 const DRIFT_LOG_INTERVAL: Duration = Duration::from_secs(5);
-/// Upper bound for waiting on a VSYNC (a frame takes ~28 ms).
+/// Upper bound for waiting on a VSYNC (a frame takes ~28 ms at the default
+/// pixel clock, ~42 ms at 12 MHz).
 const VSYNC_TIMEOUT: Duration = Duration::from_millis(100);
 /// Largest descriptor chunk that keeps every chunk burst-aligned.
 const CHUNK: usize = 4096 - 64;
@@ -141,14 +142,26 @@ macro_rules! lcd_pins {
     };
 }
 
-/// DPI configuration for the SUB3 panel.
+/// Pixel clock [`Display::new`] uses: 18 MHz, ~35 frames per second, which
+/// streams ~36 MB/s out of PSRAM.
+pub const DEFAULT_PIXEL_CLOCK: Rate = Rate::from_mhz(18);
+/// Pixel clocks per frame (928 x 548 including the blanking): the frame
+/// rate is the pixel clock divided by this.
+pub const CLOCKS_PER_FRAME: u32 = 928 * 548;
+
+/// DPI configuration for the SUB3 panel at [`DEFAULT_PIXEL_CLOCK`].
 pub fn panel_config() -> Config {
+    panel_config_at(DEFAULT_PIXEL_CLOCK)
+}
+
+/// DPI configuration for the SUB3 panel at another pixel clock.
+pub fn panel_config_at(pixel_clock: Rate) -> Config {
     Config::default()
         .with_clock_mode(ClockMode {
             polarity: Polarity::IdleLow,
             phase: Phase::ShiftLow,
         })
-        .with_frequency(Rate::from_mhz(18))
+        .with_frequency(pixel_clock)
         .with_format(Format {
             enable_2byte_mode: true,
             ..Default::default()
@@ -285,6 +298,26 @@ impl<'d> Display<'d> {
         pins: LcdPins<'d>,
         framebuffer: &'static mut [u8],
     ) -> Result<Self, DisplayError> {
+        Self::with_pixel_clock(lcd_cam, dma, pins, framebuffer, DEFAULT_PIXEL_CLOCK)
+    }
+
+    /// [`Display::new`] at another pixel clock. A lower one refreshes less
+    /// often and leaves more PSRAM bandwidth to the CPU: the scan-out reads
+    /// `2 * pixel_clock * 800 * 480 / CLOCKS_PER_FRAME` bytes per second (15 MHz:
+    /// ~29.5 frames/s, ~30 MB/s, against ~36 MB/s at the default). The SUB3
+    /// panel works at 15 MHz; at 12 MHz it shows its own colour-bar test
+    /// pattern instead of the picture.
+    ///
+    /// # Errors
+    ///
+    /// As [`Display::new`].
+    pub fn with_pixel_clock(
+        lcd_cam: LCD_CAM<'d>,
+        dma: DMA_AXI_CH0<'d>,
+        pins: LcdPins<'d>,
+        framebuffer: &'static mut [u8],
+        pixel_clock: Rate,
+    ) -> Result<Self, DisplayError> {
         static DESC: ConstStaticCell<InternalMemory<[DmaDescriptor; DESCRIPTORS]>> =
             ConstStaticCell::new(InternalMemory::new([DmaDescriptor::EMPTY; DESCRIPTORS]));
 
@@ -321,7 +354,7 @@ impl<'d> Display<'d> {
         };
 
         let lcd_cam = LcdCam::new(lcd_cam).into_async();
-        let dpi = Dpi::new(lcd_cam.lcd, dma, panel_config())
+        let dpi = Dpi::new(lcd_cam.lcd, dma, panel_config_at(pixel_clock))
             .map_err(DisplayError::Config)?
             .with_vsync(pins.vsync)
             .with_hsync(pins.hsync)
@@ -404,7 +437,7 @@ impl<'d> Display<'d> {
             }
         };
         if vsync.is_err() {
-            // A frame takes ~28 ms; without VSYNC the LCD has stopped.
+            // A frame takes 28-42 ms; without VSYNC the LCD has stopped.
             log::warn!(
                 "display: no VSYNC within {} ms, restarting",
                 VSYNC_TIMEOUT.as_millis()
