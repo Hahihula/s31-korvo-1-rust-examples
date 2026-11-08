@@ -18,7 +18,7 @@ use embassy_futures::select::{Either, select};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
-use esp_hal::{peripherals::GPIO61, timer::timg::TimerGroup};
+use esp_hal::peripherals::GPIO61;
 use esp32_s31_korvo::{board, buttons::BootButton};
 use log::{info, warn};
 use smart_leds::{
@@ -155,12 +155,8 @@ async fn boot_button_task(gpio61: GPIO61<'static>) {
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let peripherals = board::init();
+    esp32_s31_korvo_examples::start!(peripherals, "Demo 02: RGB LED (WS2812B on GPIO37 via RMT)");
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== Demo 02: RGB LED (WS2812B on GPIO37 via RMT) ===");
     let mut led = board::rgb_led(peripherals.RMT, peripherals.GPIO37).expect("RMT LED init");
     spawner.spawn(boot_button_task(peripherals.GPIO61).expect("spawn BOOT button task"));
     info!("BOOT: short press = next effect, long press (>= 1 s) = brightness");

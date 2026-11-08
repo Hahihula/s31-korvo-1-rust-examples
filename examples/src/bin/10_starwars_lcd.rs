@@ -15,8 +15,6 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-extern crate alloc;
-
 use core::cell::RefCell;
 
 use embassy_executor::Spawner;
@@ -26,7 +24,7 @@ use embassy_time::{Duration, Instant, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::RgbColor};
 use embedded_io_async::Write;
 use esp_backtrace as _;
-use esp_hal::{rng::Rng, timer::timg::TimerGroup};
+use esp_hal::rng::Rng;
 use esp32_s31_korvo::{
     board,
     display::{self, Display},
@@ -71,14 +69,13 @@ fn status(text: &str) {
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let peripherals = board::init();
     // The Wi-Fi driver needs about 60 KiB of internal RAM.
-    esp_alloc::heap_allocator!(size: 96 * 1024);
+    esp32_s31_korvo_examples::start!(
+        peripherals,
+        "Demo 10: Star Wars over telnet on the LCD",
+        heap = 96 * 1024
+    );
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== Demo 10: Star Wars over telnet on the LCD ===");
     // Only the frame buffer comes from PSRAM: keeping the Wi-Fi heap in
     // internal RAM keeps Wi-Fi traffic off the PSRAM bus the LCD depends on.
     let framebuffer = board::psram_reserve(peripherals.PSRAM, display::FRAME_BYTES);

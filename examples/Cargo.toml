@@ -4,17 +4,24 @@ description  = "Demos for the ESP32-S31-Korvo-1, built on the esp32-s31-korvo li
 edition.workspace      = true
 rust-version.workspace = true
 version.workspace      = true
+license.workspace      = true
 repository.workspace   = true
 publish      = false
 
-[dependencies]
-esp32-s31-korvo        = { workspace = true }
+[lints]
+workspace = true
+
+# The demos and their helpers build for the ESP32-S31. The hardware-
+# independent modules (terminal parser, SNTP packets, dates) also build for
+# a PC, where they are unit-tested:
+#   cargo test -p esp32-s31-korvo-examples --lib --target <host triple>
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+esp32-s31-korvo        = { workspace = true, features = ["log"] }
 esp-hal                = { workspace = true }
 esp-rtos               = { workspace = true }
 esp-bootloader-esp-idf = { workspace = true }
 log                    = { workspace = true }
 embassy-net            = { workspace = true }
-embedded-io            = { workspace = true }
 embedded-io-async      = { workspace = true }
 esp-alloc              = { workspace = true }
 esp-backtrace          = { workspace = true }
@@ -22,8 +29,6 @@ esp-println            = { workspace = true }
 embassy-executor       = { workspace = true }
 embassy-time           = { workspace = true }
 esp-radio              = { workspace = true }
-smoltcp                = { workspace = true }
-critical-section       = { workspace = true }
 static_cell            = { workspace = true }
 esp-hal-smartled       = { workspace = true }
 smart-leds             = { workspace = true }
@@ -31,3 +36,4 @@ embassy-sync           = { workspace = true }
 embassy-futures        = { workspace = true }
 libmudtelnet-rs        = { workspace = true }
 embedded-graphics      = { workspace = true }
+libm                   = { workspace = true }

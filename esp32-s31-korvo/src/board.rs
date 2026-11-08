@@ -38,25 +38,40 @@ pub mod i2c_addr {
     pub const TOUCH_ALT: u8 = 0x5D;
 }
 
-/// Initialises logging, the HAL with maximum CPU clock and a small internal heap.
+/// Initialises the HAL with the maximum CPU clock (320 MHz).
+///
+/// Logging and the heap are the application's choice:
+///
+/// ```ignore
+/// let p = esp32_s31_korvo::board::init();
+/// esp32_s31_korvo::board::init_logger(); // with the `log` feature
+/// esp_alloc::heap_allocator!(size: 96 * 1024);
+/// ```
+///
+/// Use plain RAM for the internal heap, not the template's
+/// `#[esp_hal::ram(reclaimed)]`: on the ESP32-S31 the reclaimed bootloader
+/// RAM starts at 0x2F06CFB0, where the ROM symbol table places
+/// `g_shared_buffers`, and ROM code may still use it after boot. esp-alloc
+/// takes at most three regions in all, PSRAM included.
 ///
 /// The caller still has to start `esp_rtos` with a `TIMG0` timer.
+#[must_use]
 pub fn init() -> Peripherals {
+    esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()))
+}
+
+/// Logs through `esp-println` on UART0 (the board's UART USB port), at the
+/// level in the `ESP_LOG` environment variable at build time.
+#[cfg(feature = "log")]
+pub fn init_logger() {
     esp_println::logger::init_logger_from_env();
-
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = esp_hal::init(config);
-
-    // Plain RAM instead of the template's `#[esp_hal::ram(reclaimed)]`: on the
-    // ESP32-S31 the reclaimed bootloader RAM starts at 0x2F06CFB0, where the ROM
-    // symbol table places `g_shared_buffers`. Nothing has been seen to break
-    // there, but ROM code may still use that RAM after boot.
-    esp_alloc::heap_allocator!(size: 16 * 1024);
-
-    peripherals
 }
 
 /// Creates the async I2C master for the shared bus (codec, camera, touch).
+///
+/// # Errors
+///
+/// If the configuration is rejected.
 pub fn i2c<'d>(
     i2c: impl I2cInstance + 'd,
     sda: GPIO0<'d>,
@@ -77,6 +92,10 @@ pub type RgbLed<'d> = RmtSmartLeds<'d, { buffer_size::<RGB8>(1) }, Async, RGB8, 
 
 /// Creates the async driver for the onboard RGB LED.
 ///
+/// # Errors
+///
+/// If the RMT can't be configured.
+///
 /// GPIO37 reaches the LED through a BSS138 level shifter (3.3 V to 5 V), which
 /// does not invert the signal.
 pub fn rgb_led<'d>(rmt: RMT<'d>, pin: GPIO37<'d>) -> Result<RgbLed<'d>, esp_hal_smartled::Error> {
@@ -88,14 +107,16 @@ pub fn rgb_led<'d>(rmt: RMT<'d>, pin: GPIO37<'d>) -> Result<RgbLed<'d>, esp_hal_
 /// 64-byte cache line) to the caller, e.g. as a DMA frame buffer. The rest of
 /// PSRAM stays unused.
 ///
-/// Call at most once (and not together with [`psram_split`]).
+/// Call at most once (and not together with [`psram_split`]); taking
+/// `PSRAM` by value enforces that.
 pub fn psram_reserve(psram: PSRAM<'static>, reserve: usize) -> &'static mut [u8] {
     psram_map(psram, reserve, false)
 }
 
 /// Like [`psram_reserve`], but adds the rest of PSRAM to the heap.
 ///
-/// Call at most once (and not together with [`psram_reserve`]).
+/// Call at most once (and not together with [`psram_reserve`]); taking
+/// `PSRAM` by value enforces that.
 pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> &'static mut [u8] {
     psram_map(psram, reserve, true)
 }

@@ -23,7 +23,6 @@ use esp_hal::{
     efuse::{self, InterfaceMacAddress},
     i2c::master::{AcknowledgeCheckFailedReason, Error as I2cError, I2c},
     psram::Psram,
-    timer::timg::TimerGroup,
 };
 use esp32_s31_korvo::board::{self, i2c_addr};
 use log::{info, warn};
@@ -36,12 +35,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) -> ! {
-    let peripherals = board::init();
+    esp32_s31_korvo_examples::start!(peripherals, "ESP32-S31-Korvo-1 bring-up");
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== ESP32-S31-Korvo-1 bring-up ===");
     let rev = efuse::chip_revision();
     info!("Chip revision: v{}.{}", rev.major, rev.minor);
     info!(

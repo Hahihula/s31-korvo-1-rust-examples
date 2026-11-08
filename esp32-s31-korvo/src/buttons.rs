@@ -1,105 +1,58 @@
-//! The four function buttons share one ADC pin (GPIO42 = ADC1_CH0).
+//! The buttons: the four on the ADC ladder (GPIO42 = ADC1_CH0, decoded by
+//! [`crate::ladder`]) and BOOT (GPIO61).
 //!
-//! A 10 kΩ pull-up to 3.3 V and one resistor per button to GND form a ladder.
-//! Nominal voltages from the schematic:
-//!
-//! | Button | Resistor | Voltage |
-//! |--------|----------|---------|
-//! | VOL+   | 1.3 kΩ   | 0.38 V  |
-//! | VOL-   | 3.3 kΩ   | 0.82 V  |
-//! | PLAY   | 6.8 kΩ   | 1.34 V  |
-//! | SET    | 13 kΩ    | 1.87 V  |
-//! | none   | -        | 3.30 V  |
-//!
-//! The ESP32-S31 SAR ADC is differential and its scale runs backwards: a
-//! grounded input reads about [`ZERO_DIFF_CODE`] (2198), and higher voltages
-//! give *lower* codes, about 0.91 mV per code, down to 0 at roughly 2 V. The
-//! idle level (3.3 V) is above that range and reads 0, while all four buttons
-//! are below 2 V. (Conversion taken from
-//! <https://github.com/playfulFence/esp-touch-paint>; esp-hal has no S31 ADC
-//! calibration yet.)
-//!
-//! The BOOT button (GPIO61) is a plain digital input and is handled by
+//! The BOOT button is a plain digital input and is handled by
 //! [`BootButton`]. It is also a strapping pin: holding it during reset enters
 //! download mode.
 
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     Blocking,
-    analog::adc::{Adc, AdcConfig, AdcPin, Attenuation, Error as AdcError, FULL_SCALE},
+    analog::adc::{Adc, AdcConfig, AdcPin, Attenuation, Error as AdcError},
     gpio::{Input, InputConfig, Pull},
     peripherals::{ADC1, GPIO42, GPIO61},
 };
 
-#[cfg(doc)]
-use esp_hal::analog::adc::ZERO_DIFF_CODE;
+pub use crate::ladder::{Button, millivolts};
+use crate::ladder::{Change, Debouncer};
 
-/// Input voltage at raw code 0; the scale spans twice this over [`FULL_SCALE`].
-const RANGE_MV: u32 = 2000;
 /// Poll period of the ladder.
 const POLL: Duration = Duration::from_millis(10);
-/// Number of equal consecutive polls before a state change is accepted.
-const DEBOUNCE_POLLS: u8 = 3;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Button {
-    VolUp,
-    VolDown,
-    Play,
-    Set,
-}
-
-impl Button {
-    pub const ALL: [Button; 4] = [Button::VolUp, Button::VolDown, Button::Play, Button::Set];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Button::VolUp => "VOL+",
-            Button::VolDown => "VOL-",
-            Button::Play => "PLAY",
-            Button::Set => "SET",
-        }
-    }
-
-    pub const fn index(self) -> usize {
-        self as usize
-    }
-
-    /// Maps a ladder voltage to a button, splitting halfway between nominal
-    /// levels. Idle (3.3 V) clips to about 2000 mV, just above SET (1.87 V).
-    pub const fn from_millivolts(mv: u32) -> Option<Button> {
-        match mv {
-            0..600 => Some(Button::VolUp),
-            600..1080 => Some(Button::VolDown),
-            1080..1605 => Some(Button::Play),
-            1605..1940 => Some(Button::Set),
-            _ => None,
-        }
-    }
-}
-
+/// A debounced press or release on the ladder.
 #[derive(Debug, Clone, Copy)]
 pub enum Event {
-    Pressed { button: Button, raw: u16, mv: u32 },
-    Released { button: Button, held: Duration },
+    /// A button was pressed; `raw` and `mv` are the reading that confirmed it.
+    Pressed {
+        /// Which button.
+        button: Button,
+        /// Raw ADC code.
+        raw: u16,
+        /// Estimated pin voltage.
+        mv: u32,
+    },
+    /// A button was released.
+    Released {
+        /// Which button.
+        button: Button,
+        /// How long it was held.
+        held: Duration,
+    },
 }
 
-/// Estimated pin voltage in millivolts for a raw S31 ADC code (see the module
-/// docs); clips at about 2000 mV.
-pub const fn millivolts(raw: u16) -> u32 {
-    RANGE_MV.saturating_sub(raw as u32 * 2 * RANGE_MV / FULL_SCALE as u32)
-}
-
+/// The four ladder buttons, polled every 10 ms.
 pub struct Buttons<'d> {
     adc: Adc<'d, ADC1<'d>, Blocking>,
     pin: AdcPin<GPIO42<'d>, ADC1<'d>>,
-    state: Option<Button>,
-    pressed_at: Instant,
-    candidate: Option<Button>,
-    candidate_polls: u8,
+    debouncer: Debouncer,
 }
 
 impl<'d> Buttons<'d> {
+    /// Sets up ADC1 on GPIO42.
+    ///
+    /// # Errors
+    ///
+    /// If the ADC can't be configured.
     pub fn new(adc1: ADC1<'d>, gpio42: GPIO42<'d>) -> Result<Self, AdcError> {
         let mut config = AdcConfig::new();
         // The S31 SAR has a single input range; the attenuation is ignored.
@@ -108,10 +61,7 @@ impl<'d> Buttons<'d> {
         Ok(Self {
             adc,
             pin,
-            state: None,
-            pressed_at: Instant::now(),
-            candidate: None,
-            candidate_polls: 0,
+            debouncer: Debouncer::new(),
         })
     }
 
@@ -133,34 +83,14 @@ impl<'d> Buttons<'d> {
     pub async fn next_event(&mut self) -> Event {
         loop {
             Timer::after(POLL).await;
-
             let (raw, mv) = self.sample();
-            let reading = Button::from_millivolts(mv);
-
-            if reading != self.candidate {
-                self.candidate = reading;
-                self.candidate_polls = 1;
-                continue;
-            }
-            if self.candidate_polls < DEBOUNCE_POLLS {
-                self.candidate_polls += 1;
-            }
-            if self.candidate_polls < DEBOUNCE_POLLS || reading == self.state {
-                continue;
-            }
-
-            // Moving straight from one button to another reports the release first.
-            if let Some(button) = self.state.take() {
-                return Event::Released {
-                    button,
-                    held: self.pressed_at.elapsed(),
-                };
-            }
-
-            if let Some(button) = reading {
-                self.state = Some(button);
-                self.pressed_at = Instant::now();
-                return Event::Pressed { button, raw, mv };
+            match self
+                .debouncer
+                .update(Instant::now(), Button::from_millivolts(mv))
+            {
+                Some(Change::Pressed(button)) => return Event::Pressed { button, raw, mv },
+                Some(Change::Released(button, held)) => return Event::Released { button, held },
+                None => {}
             }
         }
     }
@@ -175,6 +105,7 @@ pub struct BootButton<'d> {
 }
 
 impl<'d> BootButton<'d> {
+    /// Configures GPIO61 as an input with pull-up.
     pub fn new(gpio61: GPIO61<'d>) -> Self {
         let input = Input::new(gpio61, InputConfig::default().with_pull(Pull::Up));
         Self { input }

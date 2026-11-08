@@ -14,15 +14,12 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-extern crate alloc;
-
 use embassy_executor::Spawner;
 use embassy_net::{Stack, dns::DnsQueryType};
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
-use esp_hal::{rng::Rng, timer::timg::TimerGroup};
+use esp_hal::rng::Rng;
 use esp_radio::wifi::{WifiController, scan::ScanConfig};
-use esp32_s31_korvo::board;
 use esp32_s31_korvo_examples::net::{self, DateTime};
 use log::{error, info, warn};
 
@@ -37,14 +34,12 @@ const DNS_TEST_HOST: &str = "towel.blinkenlights.nl";
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let peripherals = board::init();
     // The Wi-Fi driver needs about 60 KiB of internal RAM.
-    esp_alloc::heap_allocator!(size: 96 * 1024);
-
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== Demo 04: Wi-Fi, DHCP, DNS, NTP ===");
+    esp32_s31_korvo_examples::start!(
+        peripherals,
+        "Demo 04: Wi-Fi, DHCP, DNS, NTP",
+        heap = 96 * 1024
+    );
 
     let Some((ssid, password)) = net::credentials() else {
         // Without credentials only the scan is useful.

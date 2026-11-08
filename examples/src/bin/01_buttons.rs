@@ -15,11 +15,7 @@
 
 use embassy_executor::Spawner;
 use esp_backtrace as _;
-use esp_hal::timer::timg::TimerGroup;
-use esp32_s31_korvo::{
-    board,
-    buttons::{Button, Buttons, Event},
-};
+use esp32_s31_korvo::buttons::{Button, Buttons, Event};
 use log::info;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -30,12 +26,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) -> ! {
-    let peripherals = board::init();
+    esp32_s31_korvo_examples::start!(peripherals, "Demo 01: buttons (ADC ladder on GPIO42)");
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
-
-    info!("=== Demo 01: buttons (ADC ladder on GPIO42) ===");
     let mut buttons = Buttons::new(peripherals.ADC1, peripherals.GPIO42).expect("ADC init");
     let (raw, mv) = buttons.sample();
     info!("Idle: raw {raw} (~{mv} mV; 3.3 V idle clips at ~2000 mV)");

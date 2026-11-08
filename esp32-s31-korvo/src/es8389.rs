@@ -14,40 +14,26 @@ use embassy_time::{Duration, Timer};
 use embedded_hal_async::i2c::I2c;
 
 /// 7-bit I2C address (schematic lists 8-bit 0x20).
-pub const ADDR: u8 = 0x10;
+pub use crate::board::i2c_addr::ES8389 as ADDR;
+pub use crate::gain::Gain;
 
 /// PGA input selection (REG0x72/0x73 bits 6:4): differential MIC1P-MIC1N on
 /// the left ADC, MIC2N-MIC2P on the right.
 const ADCL_INSEL: u8 = 1;
 const ADCR_INSEL: u8 = 1;
 
-/// Microphone PGA gain, 0 to 36.5 dB in 3 dB steps (driver's enum values).
-#[derive(Clone, Copy, Debug)]
-pub struct Gain(u8);
-
-impl Gain {
-    pub fn from_db(db: f32) -> Self {
-        // 0 dB = 0, then 3.5 dB, 6.5 dB, ... 36.5 dB = 14 (es8389_reg.h).
-        if db < 3.5 {
-            Gain(0)
-        } else {
-            Gain((((db - 3.5) / 3.0) as u8 + 1).min(14))
-        }
-    }
-    pub fn db(self) -> f32 {
-        if self.0 == 0 {
-            0.0
-        } else {
-            3.5 + 3.0 * (self.0 - 1) as f32
-        }
-    }
-}
-
+/// ES8389 driver over any async I2C bus.
+///
+/// The codec shares its bus with the camera and the touch controller. To
+/// keep the bus for them, pass a reference: `embedded-hal-async` implements
+/// `I2c` for `&mut I2c`, so `Es8389::new(&mut i2c)` borrows instead of
+/// taking ownership.
 pub struct Es8389<I> {
     i2c: I,
 }
 
 impl<I: I2c> Es8389<I> {
+    /// A driver on `i2c` (owned, or `&mut` to share the bus).
     pub fn new(i2c: I) -> Self {
         Es8389 { i2c }
     }
@@ -67,7 +53,11 @@ impl<I: I2c> Es8389<I> {
         self.w(reg, (old & !mask) | (v & mask)).await
     }
 
-    /// Chip ID registers (0xFD, 0xFE).
+    /// Chip ID registers (0xFD, 0xFE): `[0x83, 0x89]`.
+    ///
+    /// # Errors
+    ///
+    /// If the codec doesn't answer.
     pub async fn chip_id(&mut self) -> Result<[u8; 2], I::Error> {
         Ok([self.r(0xFD).await?, self.r(0xFE).await?])
     }
@@ -75,6 +65,10 @@ impl<I: I2c> Es8389<I> {
     /// Open (es8389_open), set 16 kHz / 16 bit (es8389_set_fs), start the ADC
     /// (es8389_enable) and set the microphone gain. SCLK and LRCK must already
     /// be running.
+    ///
+    /// # Errors
+    ///
+    /// If an I2C transfer fails.
     pub async fn init(&mut self, gain: Gain) -> Result<(), I::Error> {
         // es8389_open, register by register.
         for &(reg, v) in &[
@@ -206,8 +200,12 @@ impl<I: I2c> Es8389<I> {
     }
 
     /// Microphone PGA gain on both channels (es8389_apply_mic_pga_gain).
+    ///
+    /// # Errors
+    ///
+    /// If an I2C transfer fails.
     pub async fn set_gain(&mut self, g: Gain) -> Result<(), I::Error> {
-        self.w(0x72, (ADCL_INSEL << 4) | g.0).await?;
-        self.w(0x73, (ADCR_INSEL << 4) | g.0).await
+        self.w(0x72, (ADCL_INSEL << 4) | g.code()).await?;
+        self.w(0x73, (ADCR_INSEL << 4) | g.code()).await
     }
 }

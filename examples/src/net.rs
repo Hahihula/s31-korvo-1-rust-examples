@@ -18,6 +18,8 @@ use esp_radio::wifi::{
 use log::{info, warn};
 use static_cell::StaticCell;
 
+use crate::sntp;
+
 /// Socket slots: DHCP, DNS, plus a few for the application.
 const SOCKETS: usize = 6;
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
@@ -129,16 +131,32 @@ async fn connection_task(mut controller: WifiController<'static>) -> ! {
     }
 }
 
-#[derive(Debug)]
+/// Why [`ntp_time`] failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NtpError {
+    /// The server name didn't resolve.
     Dns,
+    /// The UDP socket couldn't be bound or used.
     Socket,
+    /// No valid reply within 5 s.
     Timeout,
-    BadReply,
+    /// The last reply from the server was rejected.
+    BadReply(sntp::ReplyError),
 }
 
-/// Offset between the NTP epoch (1900) and the Unix epoch (1970) in seconds.
-const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
+impl core::fmt::Display for NtpError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            NtpError::Dns => f.write_str("DNS lookup failed"),
+            NtpError::Socket => f.write_str("UDP socket error"),
+            NtpError::Timeout => f.write_str("no reply"),
+            NtpError::BadReply(e) => write!(f, "bad reply: {e}"),
+        }
+    }
+}
+
+impl core::error::Error for NtpError {}
 
 /// Asks `server` for the time (SNTP v4) and returns Unix seconds.
 pub async fn ntp_time(stack: Stack<'_>, server: &str) -> Result<u64, NtpError> {
@@ -155,74 +173,41 @@ pub async fn ntp_time(stack: Stack<'_>, server: &str) -> Result<u64, NtpError> {
     let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
     socket.bind(0).map_err(|_| NtpError::Socket)?;
 
-    // LI = 0, version 4, mode 3 (client).
-    let mut request = [0u8; 48];
-    request[0] = 0x23;
+    // A random transmit timestamp, which the server echoes back: replies
+    // that don't carry it (stray or forged packets) are ignored.
+    let rng = esp_hal::rng::Rng::new();
+    let mut nonce = [0u8; 8];
+    nonce[..4].copy_from_slice(&rng.random().to_be_bytes());
+    nonce[4..].copy_from_slice(&rng.random().to_be_bytes());
     socket
-        .send_to(&request, (addr, 123))
+        .send_to(&sntp::request(nonce), (addr, 123))
         .await
         .map_err(|_| NtpError::Socket)?;
 
-    let mut reply = [0u8; 48];
-    let (len, _) = with_timeout(Duration::from_secs(5), socket.recv_from(&mut reply))
-        .await
-        .map_err(|_| NtpError::Timeout)?
-        .map_err(|_| NtpError::Socket)?;
-    // Mode 4 (server) and a non-zero transmit timestamp.
-    if len < 48 || reply[0] & 0x07 != 4 {
-        return Err(NtpError::BadReply);
-    }
-    let seconds = u32::from_be_bytes([reply[40], reply[41], reply[42], reply[43]]);
-    u64::from(seconds)
-        .checked_sub(NTP_UNIX_OFFSET)
-        .filter(|&s| s > 0)
-        .ok_or(NtpError::BadReply)
-}
-
-/// Calendar date and time in UTC.
-#[derive(Debug, Clone, Copy)]
-pub struct DateTime {
-    pub year: i32,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
-}
-
-impl DateTime {
-    /// Converts Unix seconds to a UTC date (Howard Hinnant's `civil_from_days`).
-    pub fn from_unix(unix: u64) -> Self {
-        let days = (unix / 86_400) as i64;
-        let secs = unix % 86_400;
-
-        let z = days + 719_468;
-        let era = z.div_euclid(146_097);
-        let doe = z.rem_euclid(146_097);
-        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
-        let month = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
-        let year = (yoe + era * 400 + i64::from(month <= 2)) as i32;
-
-        Self {
-            year,
-            month,
-            day,
-            hour: (secs / 3600) as u8,
-            minute: (secs / 60 % 60) as u8,
-            second: (secs % 60) as u8,
+    // Only packets from the server's address and port count; keep listening
+    // past others until the timeout.
+    let mut last = NtpError::Timeout;
+    let receive = async {
+        let mut reply = [0u8; 64];
+        loop {
+            let Ok((len, meta)) = socket.recv_from(&mut reply).await else {
+                return Err(NtpError::Socket);
+            };
+            if meta.endpoint.addr != addr || meta.endpoint.port != 123 {
+                continue;
+            }
+            match sntp::parse_reply(&reply[..len], nonce) {
+                Ok(unix) => return Ok(unix),
+                Err(e) => last = NtpError::BadReply(e),
+            }
         }
+    };
+    // Bound first, so the future (which borrows `last`) is gone before the match.
+    let result = with_timeout(Duration::from_secs(5), receive).await;
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(last),
     }
 }
 
-impl core::fmt::Display for DateTime {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-            self.year, self.month, self.day, self.hour, self.minute, self.second
-        )
-    }
-}
+pub use crate::time::DateTime;

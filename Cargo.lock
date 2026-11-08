@@ -457,7 +457,7 @@ dependencies = [
  "heapless 0.9.3",
  "log",
  "managed",
- "smoltcp 0.13.1",
+ "smoltcp",
 ]
 
 [[package]]
@@ -1126,14 +1126,12 @@ dependencies = [
 name = "esp32-s31-korvo-examples"
 version = "0.1.0"
 dependencies = [
- "critical-section",
  "embassy-executor",
  "embassy-futures",
  "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
- "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "esp-alloc",
  "esp-backtrace",
@@ -1144,10 +1142,10 @@ dependencies = [
  "esp-radio",
  "esp-rtos",
  "esp32-s31-korvo",
+ "libm",
  "libmudtelnet-rs",
  "log",
  "smart-leds",
- "smoltcp 0.14.0",
  "static_cell",
 ]
 
@@ -1473,6 +1471,12 @@ name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+
+[[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libmudtelnet-rs"
@@ -1910,20 +1914,6 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "heapless 0.9.3",
- "managed",
-]
-
-[[package]]
-name = "smoltcp"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6f8b28ad56c6e35524a37dd492af5d1a47e31e1a4d175cd12f89c075f01980f"
-dependencies = [
- "bitflags",
- "byteorder",
- "cfg-if",
- "heapless 0.9.3",
- "log",
  "managed",
 ]
 
