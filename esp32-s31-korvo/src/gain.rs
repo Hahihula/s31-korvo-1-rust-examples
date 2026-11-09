@@ -1,42 +1,69 @@
-//! Gain steps of the ES8389 microphone amplifier (PGA).
+//! Gain steps of the ES8389 microphone amplifier (PGA), in dB.
 
-/// Microphone PGA gain, as in Espressif's `es8389_reg.h`: 0 dB, then 3.5 dB
-/// to 36.5 dB in 3 dB steps (register codes 0 to 12).
+use es8389::MicGain;
+
+/// Steps in ascending order, with their gain in dB.
+const STEPS: [(MicGain, f32); 13] = [
+    (MicGain::Db0, 0.0),
+    (MicGain::Db3_5, 3.5),
+    (MicGain::Db6_5, 6.5),
+    (MicGain::Db9_5, 9.5),
+    (MicGain::Db12_5, 12.5),
+    (MicGain::Db15_5, 15.5),
+    (MicGain::Db18_5, 18.5),
+    (MicGain::Db21_5, 21.5),
+    (MicGain::Db24_5, 24.5),
+    (MicGain::Db27_5, 27.5),
+    (MicGain::Db30_5, 30.5),
+    (MicGain::Db33_5, 33.5),
+    (MicGain::Db36_5, 36.5),
+];
+
+/// Microphone PGA gain: 0 dB, then 3.5 dB to 36.5 dB in 3 dB steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Gain(u8);
+pub struct Gain(usize);
 
 impl Gain {
     /// The lowest gain, 0 dB.
     pub const MIN: Gain = Gain(0);
     /// The highest gain, 36.5 dB.
-    pub const MAX: Gain = Gain(12);
+    pub const MAX: Gain = Gain(STEPS.len() - 1);
 
     /// The nearest gain at or below `db`, within 0 to 36.5 dB (NaN and
     /// negative values give 0 dB).
     #[must_use]
     pub fn from_db(db: f32) -> Self {
-        if db >= 3.5 {
-            // `as u8` saturates; the cap keeps it at 36.5 dB.
-            Gain((((db - 3.5) / 3.0) as u8 + 1).min(Self::MAX.0))
-        } else {
-            Gain::MIN
+        let mut best = 0;
+        for (i, &(_, step_db)) in STEPS.iter().enumerate() {
+            if db >= step_db {
+                best = i;
+            }
         }
+        Gain(best)
+    }
+
+    /// The next higher step (or the same at the maximum).
+    #[must_use]
+    pub fn up(self) -> Self {
+        Gain((self.0 + 1).min(Self::MAX.0))
+    }
+
+    /// The next lower step (or the same at the minimum).
+    #[must_use]
+    pub fn down(self) -> Self {
+        Gain(self.0.saturating_sub(1))
     }
 
     /// The gain in dB.
     #[must_use]
     pub fn db(self) -> f32 {
-        if self.0 == 0 {
-            0.0
-        } else {
-            3.5 + 3.0 * f32::from(self.0 - 1)
-        }
+        STEPS[self.0].1
     }
 
-    /// The register code (0..=12).
+    /// The step for [`es8389::Es8389::set_mic_gain`].
     #[must_use]
-    pub fn code(self) -> u8 {
-        self.0
+    pub fn mic_gain(self) -> MicGain {
+        STEPS[self.0].0
     }
 }
 
@@ -68,9 +95,17 @@ mod tests {
     }
 
     #[test]
-    fn codes_round_trip() {
-        for code in 0..=12 {
-            assert_eq!(Gain::from_db(Gain(code).db()).code(), code);
-        }
+    fn up_down_clamp() {
+        assert_eq!(Gain::MIN.up().db(), 3.5);
+        assert_eq!(Gain::MIN.down(), Gain::MIN);
+        assert_eq!(Gain::MAX.up(), Gain::MAX);
+        assert_eq!(Gain::MAX.down().db(), 33.5);
+    }
+
+    #[test]
+    fn maps_to_mic_gain() {
+        assert_eq!(Gain::MIN.mic_gain(), MicGain::Db0);
+        assert_eq!(Gain::from_db(33.5).mic_gain(), MicGain::Db33_5);
+        assert_eq!(Gain::MAX.mic_gain(), MicGain::Db36_5);
     }
 }

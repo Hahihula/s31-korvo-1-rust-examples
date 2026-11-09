@@ -62,8 +62,7 @@ ESP32-S31.
 | `esp32-s31-korvo/src/buttons.rs` | The four ADC-ladder buttons (polling, debouncing) and the BOOT button (GPIO61) |
 | `esp32-s31-korvo/src/ladder.rs` | Ladder decoding: ADC code to voltage to button, debouncer (host-tested) |
 | `esp32-s31-korvo/src/display.rs` | 800x480 RGB LCD driver: DPI timing, PSRAM frame buffer with AXI DMA, embedded-graphics `DrawTarget` |
-| `esp32-s31-korvo/src/es8389.rs` | ES8389 codec driver (recording side, both ADC channels as microphones), ported from Espressif's `esp_codec_dev` |
-| `esp32-s31-korvo/src/gain.rs` | ES8389 microphone gain steps, 0 to 36.5 dB (host-tested) |
+| `esp32-s31-korvo/src/gain.rs` | ES8389 microphone gain in dB, mapped to the `es8389` crate's `MicGain` steps (host-tested) |
 | `esp32-s31-korvo/src/audio.rs` | I2S input stream from the ES8389 (16-bit stereo Philips, DMA ring buffer, restarts after an overflow) |
 | `examples/src/lib.rs`, `demo.rs` | Helper crate root; the `start!` macro the demos begin with |
 | `examples/src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator (parser host-tested) and an incremental renderer for the LCD |
@@ -535,8 +534,8 @@ shifted.
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT), at your option.
 
-The ES8389 driver (`esp32-s31-korvo/src/es8389.rs`) is ported from Espressif's
-`esp_codec_dev` (Apache-2.0), as noted in the file.
+The ES8389 codec driver is the [`es8389`](https://crates.io/crates/es8389) crate
+(esp-hal-community), itself derived from Espressif's `esp_codec_dev` (Apache-2.0).
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for
 inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual

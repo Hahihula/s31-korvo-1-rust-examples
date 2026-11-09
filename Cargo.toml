@@ -41,6 +41,7 @@ embedded-hal-async = "1.0"
 libmudtelnet-rs = { version = "2.0.10", default-features = false }
 embedded-graphics = "0.8"
 libm = "0.2"
+es8389 = "0.1"
 
 # The ESP32-S31 support in the released crates is incomplete (Wi-Fi connect
 # hangs), so the whole esp-rs stack is pinned to one esp-hal `main` commit.

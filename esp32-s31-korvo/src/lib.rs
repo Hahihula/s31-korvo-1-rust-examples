@@ -33,6 +33,9 @@
 #![no_std]
 #![warn(missing_docs)]
 
+// The ES8389 driver crate, re-exported.
+pub use es8389;
+
 // Hardware-independent, tested on the host.
 pub mod gain;
 pub mod ladder;
@@ -46,5 +49,3 @@ pub mod board;
 pub mod buttons;
 #[cfg(target_arch = "riscv32")]
 pub mod display;
-#[cfg(target_arch = "riscv32")]
-pub mod es8389;

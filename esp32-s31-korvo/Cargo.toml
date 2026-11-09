@@ -23,6 +23,7 @@ log = ["dep:esp-println"]
 # unit-tested on a PC: `cargo test -p esp32-s31-korvo --target <host>`.
 [dependencies]
 embassy-time       = { workspace = true }
+es8389             = { workspace = true }
 
 # The drivers, only for the ESP32-S31.
 [target.'cfg(target_arch = "riscv32")'.dependencies]

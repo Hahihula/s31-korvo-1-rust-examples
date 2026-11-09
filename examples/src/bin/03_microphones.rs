@@ -21,7 +21,8 @@ use esp32_s31_korvo::{
     audio::{AudioIn, Error},
     board,
     buttons::{Button, Buttons, Event},
-    es8389::{Es8389, Gain},
+    es8389::{Clock, Config, Es8389, Format, WordLength},
+    gain::Gain,
     i2s_in_pins,
 };
 use log::{error, info, warn};
@@ -66,13 +67,25 @@ async fn main(spawner: Spawner) -> ! {
     let mut i2c = board::i2c(peripherals.I2C0, peripherals.GPIO0, peripherals.GPIO1)
         .expect("I2C config is valid");
     // Borrowed, so the bus stays available for the camera and touch.
-    let mut codec = Es8389::new(&mut i2c);
+    let mut codec = Es8389::new(&mut i2c, board::i2c_addr::ES8389);
     match codec.chip_id().await {
         Ok(id) => info!("ES8389 chip ID {:02X} {:02X}", id[0], id[1]),
         Err(e) => error!("ES8389 did not answer: {e:?}"),
     }
     let mut gain = Gain::from_db(START_GAIN_DB);
-    match codec.init(gain).await {
+    // 16-bit stereo I2S: BCLK = 32 x fs.
+    let config = Config {
+        clock: Clock::Bclk(32 * SAMPLE_RATE),
+        sample_rate: SAMPLE_RATE,
+        format: Format::I2s,
+        word_length: WordLength::Bits16,
+        dac_reference: false,
+    };
+    let started = match codec.init(config).await {
+        Ok(()) => codec.set_mic_gain(gain.mic_gain()).await.map_err(Into::into),
+        Err(e) => Err(e),
+    };
+    match started {
         Ok(()) => info!("ES8389 running, mic gain {} dB", gain.db()),
         Err(e) => error!("ES8389 init failed: {e:?}"),
     }
@@ -86,13 +99,12 @@ async fn main(spawner: Spawner) -> ! {
                 l.rms[0], l.peak[0], l.rms[1], l.peak[1]
             ),
             embassy_futures::select::Either::Second(Event::Pressed { button, .. }) => {
-                let step = match button {
-                    Button::VolUp => 3.0,
-                    Button::VolDown => -3.0,
+                gain = match button {
+                    Button::VolUp => gain.up(),
+                    Button::VolDown => gain.down(),
                     _ => continue,
                 };
-                gain = Gain::from_db((gain.db() + step).max(0.0));
-                match codec.set_gain(gain).await {
+                match codec.set_mic_gain(gain.mic_gain()).await {
                     Ok(()) => info!("mic gain {} dB", gain.db()),
                     Err(e) => warn!("gain change failed: {e:?}"),
                 }
