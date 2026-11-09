@@ -82,7 +82,10 @@ async fn main(spawner: Spawner) -> ! {
         dac_reference: false,
     };
     let started = match codec.init(config).await {
-        Ok(()) => codec.set_mic_gain(gain.mic_gain()).await.map_err(Into::into),
+        Ok(()) => codec
+            .set_mic_gain(gain.mic_gain())
+            .await
+            .map_err(Into::into),
         Err(e) => Err(e),
     };
     match started {
