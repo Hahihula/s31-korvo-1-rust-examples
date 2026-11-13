@@ -51,7 +51,7 @@ The repository is a Cargo workspace with two crates:
   using the board doesn't pull in the network stack.
 
 In both, the hardware-independent modules (button ladder decoding, gain steps, the
-terminal parser, SNTP packets, dates) touch no peripheral and read no clock. They also
+terminal parser, dates) touch no peripheral and read no clock. They also
 build for a PC, where they are unit-tested; everything else builds only for the
 ESP32-S31.
 
@@ -66,8 +66,8 @@ ESP32-S31.
 | `esp32-s31-korvo/src/audio.rs` | I2S input stream from the ES8389 (16-bit stereo Philips, DMA ring buffer, restarts after an overflow) |
 | `examples/src/lib.rs`, `demo.rs` | Helper crate root; the `start!` macro the demos begin with |
 | `examples/src/terminal.rs` | 80x24 VT100/ANSI-subset terminal emulator (parser host-tested) and an incremental renderer for the LCD |
-| `examples/src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP client |
-| `examples/src/sntp.rs`, `time.rs` | SNTP request and reply checks; UTC dates from Unix time (host-tested) |
+| `examples/src/net.rs` | Wi-Fi station setup, embassy-net stack with DHCP, reconnect task, SNTP query (the `sntpc` crate with its embassy adapters) |
+| `examples/src/time.rs` | UTC dates from Unix time (host-tested) |
 | `examples/build.rs` | Linker script (`linkall.x`) and hints for common link errors |
 | `examples/src/bin/NN_*.rs` | The demos |
 
@@ -316,9 +316,9 @@ What the demo does:
    gets no answer from the driver within 30 s is cancelled and retried.
 3. Gets an IP address, gateway and DNS server over DHCP (embassy-net).
 4. Looks up `towel.blinkenlights.nl` in DNS, the host demo 05 will connect to.
-5. Fetches the time from `pool.ntp.org` with a minimal SNTP request over UDP. Only
-   a reply from the server's address that echoes the request's random timestamp and
-   comes from a synchronised server (stratum 1-15) is accepted.
+5. Fetches the time from `pool.ntp.org` with the [`sntpc`](https://crates.io/crates/sntpc)
+   crate (SNTP over UDP, 5 s timeout). `sntpc` checks that the reply comes from the
+   server's address, echoes the request's timestamp and is from a synchronised server.
 6. Every 10 seconds prints the current UTC time (NTP time plus the time elapsed since)
    and the IP address. If NTP failed, it is retried each round instead.
 

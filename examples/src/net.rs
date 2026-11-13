@@ -3,9 +3,11 @@
 //! Credentials are read at build time from the `WIFI_SSID` and `WIFI_PASSWORD`
 //! environment variables. An empty or missing password selects an open network.
 
+use core::net::{IpAddr, SocketAddr};
+
 use embassy_executor::Spawner;
 use embassy_net::{
-    Config as NetConfig, Runner, Stack, StackResources,
+    Config as NetConfig, IpAddress, Runner, Stack, StackResources,
     dns::DnsQueryType,
     udp::{PacketMetadata, UdpSocket},
 };
@@ -16,9 +18,10 @@ use esp_radio::wifi::{
     WifiError, sta::StationConfig,
 };
 use log::{info, warn};
+use sntpc::NtpContext;
+use sntpc_net_embassy::UdpSocketWrapper;
+use sntpc_time_embassy::EmbassyTimestampGenerator;
 use static_cell::StaticCell;
-
-use crate::sntp;
 
 /// Socket slots: DHCP, DNS, plus a few for the application.
 const SOCKETS: usize = 6;
@@ -132,17 +135,17 @@ async fn connection_task(mut controller: WifiController<'static>) -> ! {
 }
 
 /// Why [`ntp_time`] failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum NtpError {
-    /// The server name didn't resolve.
+    /// The server name didn't resolve to an IPv4 address.
     Dns,
-    /// The UDP socket couldn't be bound or used.
+    /// The UDP socket couldn't be bound.
     Socket,
-    /// No valid reply within 5 s.
+    /// No reply within 5 s.
     Timeout,
-    /// The last reply from the server was rejected.
-    BadReply(sntp::ReplyError),
+    /// The request failed or the reply was rejected.
+    Ntp(sntpc::Error),
 }
 
 impl core::fmt::Display for NtpError {
@@ -151,20 +154,23 @@ impl core::fmt::Display for NtpError {
             NtpError::Dns => f.write_str("DNS lookup failed"),
             NtpError::Socket => f.write_str("UDP socket error"),
             NtpError::Timeout => f.write_str("no reply"),
-            NtpError::BadReply(e) => write!(f, "bad reply: {e}"),
+            NtpError::Ntp(e) => write!(f, "{e:?}"),
         }
     }
 }
 
 impl core::error::Error for NtpError {}
 
-/// Asks `server` for the time (SNTP v4) and returns Unix seconds.
+/// Asks `server` for the time (SNTP, with the `sntpc` crate) and returns
+/// Unix seconds.
 pub async fn ntp_time(stack: Stack<'_>, server: &str) -> Result<u64, NtpError> {
     let addrs = stack
         .dns_query(server, DnsQueryType::A)
         .await
         .map_err(|_| NtpError::Dns)?;
-    let addr = *addrs.first().ok_or(NtpError::Dns)?;
+    let Some(IpAddress::Ipv4(addr)) = addrs.first().copied() else {
+        return Err(NtpError::Dns);
+    };
 
     let mut rx_meta = [PacketMetadata::EMPTY; 2];
     let mut rx_buf = [0u8; 128];
@@ -172,41 +178,14 @@ pub async fn ntp_time(stack: Stack<'_>, server: &str) -> Result<u64, NtpError> {
     let mut tx_buf = [0u8; 128];
     let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
     socket.bind(0).map_err(|_| NtpError::Socket)?;
+    let socket = UdpSocketWrapper::from(socket);
 
-    // A random transmit timestamp, which the server echoes back: replies
-    // that don't carry it (stray or forged packets) are ignored.
-    let rng = esp_hal::rng::Rng::new();
-    let mut nonce = [0u8; 8];
-    nonce[..4].copy_from_slice(&rng.random().to_be_bytes());
-    nonce[4..].copy_from_slice(&rng.random().to_be_bytes());
-    socket
-        .send_to(&sntp::request(nonce), (addr, 123))
-        .await
-        .map_err(|_| NtpError::Socket)?;
-
-    // Only packets from the server's address and port count; keep listening
-    // past others until the timeout.
-    let mut last = NtpError::Timeout;
-    let receive = async {
-        let mut reply = [0u8; 64];
-        loop {
-            let Ok((len, meta)) = socket.recv_from(&mut reply).await else {
-                return Err(NtpError::Socket);
-            };
-            if meta.endpoint.addr != addr || meta.endpoint.port != 123 {
-                continue;
-            }
-            match sntp::parse_reply(&reply[..len], nonce) {
-                Ok(unix) => return Ok(unix),
-                Err(e) => last = NtpError::BadReply(e),
-            }
-        }
-    };
-    // Bound first, so the future (which borrows `last`) is gone before the match.
-    let result = with_timeout(Duration::from_secs(5), receive).await;
-    match result {
-        Ok(result) => result,
-        Err(_) => Err(last),
+    let context = NtpContext::new(EmbassyTimestampGenerator::default());
+    let request = sntpc::get_time(SocketAddr::new(IpAddr::V4(addr), 123), &socket, context);
+    match with_timeout(Duration::from_secs(5), request).await {
+        Ok(Ok(time)) => Ok(time.sec()),
+        Ok(Err(e)) => Err(NtpError::Ntp(e)),
+        Err(_) => Err(NtpError::Timeout),
     }
 }
 

@@ -23,6 +23,9 @@ esp-bootloader-esp-idf = { workspace = true }
 log                    = { workspace = true }
 embassy-net            = { workspace = true }
 embedded-io-async      = { workspace = true }
+sntpc                  = { workspace = true }
+sntpc-net-embassy      = { workspace = true }
+sntpc-time-embassy     = { workspace = true }
 esp-alloc              = { workspace = true }
 esp-backtrace          = { workspace = true }
 esp-println            = { workspace = true }
